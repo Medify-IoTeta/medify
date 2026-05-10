@@ -23,7 +23,18 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _loadMedicines();
     _startPolling();
+  }
+
+  Future<void> _loadMedicines() async {
+    try {
+      final medicines = await _apiService.getMedicines();
+      if (!mounted) return;
+      setState(() => _medicines.addAll(medicines));
+    } catch (e) {
+      debugPrint('Failed to load medicines: $e');
+    }
   }
 
   @override
@@ -57,12 +68,46 @@ class _HomeScreenState extends State<HomeScreen> {
 
   int get _takenCount => _completed.length;
 
+  List<Medicine> _medicinesForTiming(String timing) => _medicines
+      .where((m) => m.timePeriod.name.toUpperCase() == timing)
+      .toList();
+
+  IconData _timingIcon(String timing) {
+    switch (timing) {
+      case 'MORNING': return Icons.wb_twilight;
+      case 'NOON':    return Icons.wb_sunny_outlined;
+      case 'EVENING': return Icons.nights_stay_outlined;
+      default:        return Icons.schedule;
+    }
+  }
+
+  Color _timingColor(String timing) {
+    switch (timing) {
+      case 'MORNING': return const Color(0xFFF59F0A);
+      case 'NOON':    return AppColors.primary;
+      case 'EVENING': return const Color(0xFF7C6EF8);
+      default:        return AppColors.textSecondary;
+    }
+  }
+
   int get _totalEnabled => _medicines.where((m) => m.enabled).length;
 
+  List<String> get _activeTimings => ['MORNING', 'NOON', 'EVENING']
+      .where((t) => _medicinesForTiming(t).isNotEmpty)
+      .toList();
+
+  int get _totalWindows => _activeTimings.length;
+
+  int get _completedWindows => _activeTimings
+      .where((t) => _medicinesForTiming(t)
+          .every((m) => m.status == MedicationStatus.taken))
+      .length;
+
   String get _subtitle {
-    if (_totalEnabled == 0) return 'No medicines registered';
-    if (_upcoming.isEmpty) return 'All done for today';
-    return '${_upcoming.length} medication${_upcoming.length == 1 ? '' : 's'} remaining';
+    if (_totalWindows == 0) return 'No medicines registered';
+    if (_completedWindows == _totalWindows) return 'All done for today';
+    final remaining = _totalWindows - _completedWindows;
+    return '$remaining window${remaining == 1 ? '' : 's'} remaining';
   }
 
   // ── Navigation ───────────────────────────────────────────────
@@ -87,46 +132,11 @@ class _HomeScreenState extends State<HomeScreen> {
       try {
         final result = await _apiService.getNotification();
         if (result['status'] == 'OK') {
-          final message = result['message'];
+          final message  = result['message']  as String;
+          final intakeId = result['intakeId'] as int?;
+          final timing   = result['timing']   as String?;
           if (!mounted) return false;
-          await showDialog(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('Reminder'),
-              content: Text(message),
-              actions: [
-                TextButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    final TimeOfDay? picked = await showTimePicker(
-                      context: context,
-                      initialTime: TimeOfDay.now(),
-                    );
-                    if (picked != null) {
-                      await _apiService.sendNotification(
-                          'snooze_custom:${picked.hour}:${picked.minute}');
-                    }
-                  },
-                  child: const Text('Choose Time'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await _apiService.sendNotification('snooze_15');
-                  },
-                  child: const Text('Remind in 15 min'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await _apiService.sendNotification('ok');
-                    await _handleDispense();
-                  },
-                  child: const Text('OK'),
-                ),
-              ],
-            ),
-          );
+          await _showReminderDialog(message, intakeId, timing);
         }
       } catch (e) {
         debugPrint('Polling error: $e');
@@ -136,25 +146,141 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _handleDispense() async {
+  Future<void> _showReminderDialog(String message, int? intakeId, String? timing) async {
+    final timingMeds = timing != null ? _medicinesForTiming(timing) : <Medicine>[];
+
+    await showDialog(
+      context: context,
+      builder: (_) {
+        bool expanded = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Reminder'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message),
+                if (timingMeds.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: () => setDialogState(() => expanded = !expanded),
+                    child: Row(
+                      children: [
+                        Text(
+                          expanded ? 'Hide medicines' : 'Show medicines',
+                          style: TextStyle(
+                            color: AppColors.primary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Icon(
+                          expanded ? Icons.expand_less : Icons.expand_more,
+                          size: 16,
+                          color: AppColors.primary,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (expanded) ...[
+                    const SizedBox(height: 6),
+                    ...timingMeds.map((m) => Padding(
+                          padding: const EdgeInsets.only(left: 4, top: 2),
+                          child: Text(
+                            '• ${m.name}  ${_formatAmount(m.dosageAmount)} ${m.dosageUnit.name}',
+                            style: AppTextStyles.bodySm,
+                          ),
+                        )),
+                  ],
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  final TimeOfDay? picked = await showTimePicker(
+                    context: context,
+                    initialTime: TimeOfDay.now(),
+                  );
+                  if (picked != null) {
+                    if (intakeId != null) {
+                      await _apiService.postponeIntake(intakeId);
+                    }
+                    await _apiService.sendNotification(
+                      'snooze_custom:${picked.hour}:${picked.minute}',
+                      intakeId: intakeId,
+                    );
+                  }
+                },
+                child: const Text('Choose Time'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  if (intakeId != null) {
+                    await _apiService.postponeIntake(intakeId);
+                  }
+                  await _apiService.sendNotification('snooze_15', intakeId: intakeId);
+                },
+                child: const Text('Remind in 15 min'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await _handleConfirmIntake(intakeId, timing);
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _handleConfirmIntake(int? intakeId, String? timing) async {
     try {
-      final bool success = await _apiService.dispenseFromDevice();
+      if (intakeId != null) {
+        await _apiService.approveIntake(intakeId);
+      }
+
+      final bool dispensed = await _apiService.dispenseFromDevice();
+
+      if (dispensed && intakeId != null) {
+        await _apiService.releaseIntake(intakeId);
+        setState(() {
+          for (int i = 0; i < _medicines.length; i++) {
+            final m = _medicines[i];
+            final inWindow = timing == null ||
+                m.timePeriod.name.toUpperCase() == timing.toUpperCase();
+            if (m.status == MedicationStatus.pending && inWindow) {
+              _medicines[i] = m.copyWith(status: MedicationStatus.taken);
+            }
+          }
+        });
+      }
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(success
-            ? 'Pills dispensed successfully'
+        content: Text(dispensed
+            ? 'Pills dispensed — intake recorded'
             : 'Device did not respond as expected'),
-        backgroundColor: success ? Colors.green : Colors.orange,
+        backgroundColor: dispensed ? Colors.green : Colors.orange,
       ));
     } catch (e) {
-      debugPrint('Device error: $e');
+      debugPrint('Intake error: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Failed to communicate with device: $e'),
+        content: Text('Error: $e'),
         backgroundColor: Colors.red,
       ));
     }
   }
+
+  String _formatAmount(double amount) =>
+      amount == amount.truncateToDouble() ? amount.toInt().toString() : amount.toString();
 
   // ── Build ────────────────────────────────────────────────────
 
@@ -197,7 +323,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                 ),
-                ProgressRing(taken: _takenCount, total: _totalEnabled),
+                ProgressRing(taken: _completedWindows, total: _totalWindows),
               ],
             ),
 
@@ -217,21 +343,52 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    const timings = ['MORNING', 'NOON', 'EVENING'];
+    final groups = timings
+        .map((t) => MapEntry(t, _medicinesForTiming(t)))
+        .where((e) => e.value.isNotEmpty)
+        .toList();
+
     return ListView(
-      children: [
-        if (_upcoming.isNotEmpty) ...[
-          Text('Upcoming', style: AppTextStyles.h3),
-          const SizedBox(height: AppSpacing.sm),
-          ..._upcoming.map((m) => MedicationCard(medicine: m)),
-          const SizedBox(height: AppSpacing.xl),
-        ],
-        if (_completed.isNotEmpty) ...[
-          Text('Completed', style: AppTextStyles.h3),
-          const SizedBox(height: AppSpacing.sm),
-          ..._completed.map((m) => MedicationCard(medicine: m)),
-        ],
-      ],
+      children: groups.map((e) => _buildTimingGroup(e.key, e.value)).toList(),
     );
   }
 
+  Widget _buildTimingGroup(String timing, List<Medicine> meds) {
+    final taken = meds.where((m) => m.status == MedicationStatus.taken).length;
+    final color = _timingColor(timing);
+    final label = timing[0] + timing.substring(1).toLowerCase();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppRadius.lgBorder,
+        border: Border.all(color: AppColors.border),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: AppRadius.mdBorder,
+            ),
+            child: Icon(_timingIcon(timing), color: color, size: 20),
+          ),
+          title: Text(label, style: AppTextStyles.bodyLg),
+          subtitle: Text('$taken / ${meds.length} taken',
+              style: AppTextStyles.bodySm),
+          children: [
+            const Divider(height: 1),
+            ...meds.map((m) => MedicationCard(medicine: m)),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
+    );
+  }
 }

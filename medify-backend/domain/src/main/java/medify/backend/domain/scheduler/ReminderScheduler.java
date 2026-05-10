@@ -1,23 +1,33 @@
 package medify.backend.domain.scheduler;
 
+import medify.backend.domain.model.Intake;
+import medify.backend.domain.model.IntakeStatus;
 import medify.backend.domain.model.Medicine;
 import medify.backend.domain.model.Timing;
+import medify.backend.domain.port.IntakeRepositoryPort;
 import medify.backend.domain.port.MedicineRepositoryPort;
 import medify.backend.domain.port.NotificationPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.Duration;
 import java.util.List;
 
 @Component
 public class ReminderScheduler {
     private static final Logger logger = LoggerFactory.getLogger(ReminderScheduler.class);
     private final MedicineRepositoryPort medicineRepository;
+    private final IntakeRepositoryPort intakeRepository;
     private final NotificationPort notificationPort;
 
-    public ReminderScheduler(MedicineRepositoryPort medicineRepository, NotificationPort notificationPort) {
+    public ReminderScheduler(MedicineRepositoryPort medicineRepository,
+                             IntakeRepositoryPort intakeRepository,
+                             NotificationPort notificationPort) {
         this.medicineRepository = medicineRepository;
+        this.intakeRepository = intakeRepository;
         this.notificationPort = notificationPort;
     }
 
@@ -31,14 +41,13 @@ public class ReminderScheduler {
         sendReminder(Timing.NOON);
     }
 
-    @Scheduled(cron = "0 0 20 * * *")
+    @Scheduled(cron = "0 17 20 * * *")
     public void sendEveningReminder() {
         sendReminder(Timing.EVENING);
     }
 
-    private void sendReminder(Timing timing) {
+    public void sendReminder(Timing timing) {
         List<Medicine> medicines = medicineRepository.findByTiming(timing);
-
         if (medicines.isEmpty()) {
             logger.info("No medicines scheduled for {}", timing);
             return;
@@ -49,8 +58,18 @@ public class ReminderScheduler {
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("");
 
-        logger.info("Sending reminder for {}: {}", timing, names);
-        notificationPort.send("Time to take your medicines: " + names);
+        LocalDateTime now = LocalDateTime.now();
+        Intake intake = new Intake();
+        intake.setUserId(1L);
+        intake.setTiming(timing);
+        intake.setWindowStartTime(now);
+        intake.setWindowEndTime(now.plusHours(1));
+        intake.setStatus(IntakeStatus.PENDING);
+        Intake saved = intakeRepository.save(intake);
+
+        String timingLabel = timing.name().charAt(0) + timing.name().substring(1).toLowerCase();
+        logger.info("Sending {} reminder for: {}, intake id={}", timing, names, saved.getId());
+        notificationPort.send("Time to take your " + timingLabel + " medicines", saved.getId(), timing.name());
     }
 
     public void scheduleImmediateReminder(String medicineName) {
@@ -58,38 +77,42 @@ public class ReminderScheduler {
             try {
                 logger.info("Scheduling immediate reminder for {} in 1 minute", medicineName);
                 Thread.sleep(60_000);
-                notificationPort.send("תזכורת: זכור ליטול את " + medicineName);
+                notificationPort.send("Reminder: take your " + medicineName, null, null);
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                Thread.currentThread().interrupt();
             }
         }).start();
     }
 
-    public void snooze(Timing timing, int minutes) {
-        new Thread(() -> {
-            try {
-                logger.info("Snoozing {} reminder for {} minutes", timing, minutes);
-                Thread.sleep((long) minutes * 60 * 1000);
-                sendReminder(timing);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }).start();
-    }
-
-    public void snoozeUntil(Timing timing, int hour, int minute) {
-        new Thread(() -> {
-            try {
-                java.time.LocalTime target = java.time.LocalTime.of(hour, minute);
-                long secondsUntil = java.time.Duration.between(java.time.LocalTime.now(), target).getSeconds();
-                if (secondsUntil > 0) {
-                    logger.info("Snoozing {} reminder until {}:{}", timing, hour, minute);
-                    Thread.sleep(secondsUntil * 1000);
-                    sendReminder(timing);
+    public void snoozeByIntakeId(Long intakeId, int minutes) {
+        intakeRepository.findById(intakeId).ifPresent(intake -> {
+            new Thread(() -> {
+                try {
+                    logger.info("Snoozing intake {} for {} minutes", intakeId, minutes);
+                    Thread.sleep((long) minutes * 60 * 1000);
+                    sendReminder(intake.getTiming());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }).start();
+            }).start();
+        });
+    }
+
+    public void snoozeUntilByIntakeId(Long intakeId, int hour, int minute) {
+        intakeRepository.findById(intakeId).ifPresent(intake -> {
+            new Thread(() -> {
+                try {
+                    LocalTime target = LocalTime.of(hour, minute);
+                    long seconds = Duration.between(LocalTime.now(), target).getSeconds();
+                    if (seconds > 0) {
+                        logger.info("Snoozing intake {} until {}:{}", intakeId, hour, minute);
+                        Thread.sleep(seconds * 1000);
+                        sendReminder(intake.getTiming());
+                    }
+                } catch (Exception e) {
+                    Thread.currentThread().interrupt();
+                }
+            }).start();
+        });
     }
 }

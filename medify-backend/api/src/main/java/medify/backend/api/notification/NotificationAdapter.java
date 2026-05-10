@@ -8,20 +8,20 @@ import org.springframework.stereotype.Component;
 @Component
 public class NotificationAdapter implements NotificationPort {
     private static final Logger logger = LoggerFactory.getLogger(NotificationAdapter.class);
-    private static String pendingNotification = null;
+
+    public record PendingNotification(String message, Long intakeId, String timing) {}
+
+    private static volatile PendingNotification pending = null;
 
     @Override
-    public void send(String message) {
-        pendingNotification = message;
-        logger.info("Notification queued: {}", message);
+    public void send(String message, Long intakeId, String timing) {
+        pending = new PendingNotification(message, intakeId, timing);
+        logger.info("Notification queued: {} (intakeId={}, timing={})", message, intakeId, timing);
     }
 
-    public static String getPendingNotification() {
-        if (pendingNotification != null) {
-            String message = pendingNotification;
-            pendingNotification = null;
-            return message;
-        }
-        return null;
+    public static PendingNotification drain() {
+        PendingNotification p = pending;
+        pending = null;
+        return p;
     }
 }

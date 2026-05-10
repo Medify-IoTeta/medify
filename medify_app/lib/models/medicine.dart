@@ -32,29 +32,51 @@ class Medicine {
   });
 
   factory Medicine.fromJson(Map<String, dynamic> json) {
+    // Backend uses 'timing' (MORNING/NOON/EVENING), Flutter uses 'timePeriod' (morning/noon/evening)
+    final String timingRaw =
+        (json['timing'] as String? ?? json['timePeriod'] as String? ?? 'morning').toLowerCase();
+
+    // Backend stores instruction as description field value
+    final String desc = json['description'] as String? ?? '';
+    InstructionOption instructionOpt;
+    String? customInstructions;
+    switch (desc.toLowerCase()) {
+      case 'afterfood':
+        instructionOpt = InstructionOption.afterFood;
+      case 'emptystomach':
+        instructionOpt = InstructionOption.emptyStomach;
+      default:
+        if (desc.isNotEmpty) {
+          instructionOpt = InstructionOption.other;
+          customInstructions = desc;
+        } else {
+          instructionOpt = InstructionOption.afterFood;
+        }
+    }
+
     return Medicine(
-      id: json['id'] as String,
+      // Backend returns Long id — convert to String
+      id: json['id'].toString(),
       name: json['name'] as String,
-      dosageAmount: (json['dosageAmount'] as num).toDouble(),
+      // dosageAmount/dosageUnit not stored in backend — use defaults
+      dosageAmount: (json['dosageAmount'] as num?)?.toDouble() ?? 1.0,
       dosageUnit: DosageUnit.values.firstWhere(
-        (e) => e.name == json['dosageUnit'],
+        (e) => e.name == (json['dosageUnit'] as String? ?? '').toLowerCase(),
         orElse: () => DosageUnit.pills,
       ),
       timePeriod: TimePeriod.values.firstWhere(
-        (e) => e.name == json['timePeriod'],
+        (e) => e.name == timingRaw,
         orElse: () => TimePeriod.morning,
       ),
       time: json['time'] as String? ?? '',
       status: MedicationStatus.values.firstWhere(
-        (e) => e.name == json['status'],
+        (e) => e.name == (json['status'] as String? ?? 'pending').toLowerCase(),
         orElse: () => MedicationStatus.pending,
       ),
-      instructionOption: InstructionOption.values.firstWhere(
-        (e) => e.name == json['instructionOption'],
-        orElse: () => InstructionOption.afterFood,
-      ),
-      instructions: json['instructions'] as String?,
-      enabled: json['enabled'] as bool? ?? true,
+      instructionOption: instructionOpt,
+      instructions: customInstructions,
+      // Backend uses 'active', Flutter uses 'enabled'
+      enabled: json['active'] as bool? ?? json['enabled'] as bool? ?? true,
     );
   }
 

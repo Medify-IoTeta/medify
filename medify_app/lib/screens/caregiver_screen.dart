@@ -1,0 +1,534 @@
+import 'package:flutter/material.dart';
+
+import '../models/medicine.dart';
+import '../services/api_service.dart';
+import '../theme/app_theme.dart';
+
+const int _caregiverUserId = 2;
+
+class CaregiverScreen extends StatefulWidget {
+  const CaregiverScreen({super.key});
+
+  @override
+  State<CaregiverScreen> createState() => _CaregiverScreenState();
+}
+
+class _CaregiverScreenState extends State<CaregiverScreen> {
+  final ApiService _apiService = ApiService();
+
+  List<Map<String, dynamic>> _todayIntakes = [];
+  List<Medicine> _medicines = [];
+  List<Map<String, dynamic>> _missedAlerts = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final results = await Future.wait([
+        _apiService.getTodayIntakes(),
+        _apiService.getMedicines(),
+        _apiService.getNotificationsLog(_caregiverUserId),
+      ]);
+
+      if (!mounted) return;
+      setState(() {
+        _todayIntakes = results[0] as List<Map<String, dynamic>>;
+        _medicines    = results[1] as List<Medicine>;
+        _missedAlerts = (results[2] as List<Map<String, dynamic>>)
+            .where((n) => n['type'] == 'MISSED_INTAKE')
+            .toList()
+          ..sort((a, b) =>
+              (b['sentTime'] as String).compareTo(a['sentTime'] as String));
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('CaregiverScreen load error: $e');
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  // ── Computed ─────────────────────────────────────────────────
+
+  int get _takenCount =>
+      _todayIntakes.where((i) => i['status'] == 'TAKEN').length;
+
+  List<Medicine> _medicinesForTiming(String timing) => _medicines
+      .where((m) => m.timePeriod.name.toUpperCase() == timing.toUpperCase())
+      .toList();
+
+  // ── Build ─────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Caregiver View'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              setState(() => _loading = true);
+              _load();
+            },
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                children: [
+                  _buildSummaryCard(),
+                  const SizedBox(height: AppSpacing.xxl),
+
+                  _buildSectionHeader(
+                    'Medication Schedule',
+                    Icons.medication_outlined,
+                    AppColors.primary,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  if (_medicines.isEmpty)
+                    _buildEmptyState('No medicines registered')
+                  else
+                    ..._buildMedicineSchedule(),
+
+                  const SizedBox(height: AppSpacing.xxl),
+
+                  _buildSectionHeader(
+                    "Today's Intake Status",
+                    Icons.calendar_today_outlined,
+                    AppColors.primary,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  if (_todayIntakes.isEmpty)
+                    _buildEmptyState('No intakes recorded today')
+                  else
+                    ..._todayIntakes.map(_buildIntakeTile),
+
+                  const SizedBox(height: AppSpacing.xxl),
+
+                  _buildSectionHeader(
+                    'Missed Alerts${_missedAlerts.isNotEmpty ? ' (${_missedAlerts.length})' : ''}',
+                    Icons.warning_amber_rounded,
+                    _missedAlerts.isNotEmpty
+                        ? AppColors.error
+                        : AppColors.textSecondary,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  if (_missedAlerts.isEmpty)
+                    _buildEmptyState('No missed alerts')
+                  else
+                    ..._missedAlerts.map(_buildAlertCard),
+                ],
+              ),
+            ),
+    );
+  }
+
+  // ── Widgets ───────────────────────────────────────────────────
+
+  Widget _buildSummaryCard() {
+    const allTimings = ['MORNING', 'NOON', 'EVENING'];
+    final total  = allTimings.where((t) => _medicinesForTiming(t).isNotEmpty).length;
+    final taken  = _todayIntakes.where((i) => i['status'] == 'TAKEN').length;
+    final missed = _todayIntakes.where((i) => i['status'] == 'MISSED').length;
+    final progress = total == 0 ? 0.0 : taken / total;
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primary, AppColors.secondary],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: AppRadius.lgBorder,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.person_outline,
+                        color: Colors.white70, size: 16),
+                    const SizedBox(width: 6),
+                    Text('Patient',
+                        style: AppTextStyles.bodySm
+                            .copyWith(color: Colors.white70)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text('$taken / $total windows completed today',
+                    style: AppTextStyles.h3.copyWith(color: Colors.white)),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: AppRadius.smBorder,
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 6,
+                    backgroundColor: Colors.white24,
+                    valueColor:
+                        const AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                ),
+                if (missed > 0) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          color: Colors.orangeAccent, size: 14),
+                      const SizedBox(width: 4),
+                      Text('$missed missed',
+                          style: AppTextStyles.bodySm
+                              .copyWith(color: Colors.orangeAccent)),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.lg),
+          SizedBox(
+            width: 64,
+            height: 64,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 6,
+                  backgroundColor: Colors.white24,
+                  valueColor:
+                      const AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+                Text(
+                  total == 0 ? '—' : '$taken/$total',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, IconData icon, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: AppSpacing.sm),
+        Text(title, style: AppTextStyles.h3),
+      ],
+    );
+  }
+
+  List<Widget> _buildMedicineSchedule() {
+    const order = ['MORNING', 'NOON', 'EVENING'];
+    return order
+        .map((timing) => MapEntry(timing, _medicinesForTiming(timing)))
+        .where((e) => e.value.isNotEmpty)
+        .map((e) => _buildTimingGroup(e.key, e.value))
+        .toList();
+  }
+
+  Widget _buildTimingGroup(String timing, List<Medicine> meds) {
+    final color = _timingColor(timing);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppRadius.lgBorder,
+        border: Border.all(color: AppColors.border),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: AppRadius.mdBorder,
+            ),
+            child: Icon(_timingIcon(timing), color: color, size: 18),
+          ),
+          title: Text(_capitalize(timing), style: AppTextStyles.bodyLg),
+          subtitle: Text('${meds.length} medicine${meds.length == 1 ? '' : 's'}',
+              style: AppTextStyles.bodySm),
+          children: [
+            const Divider(height: 1),
+            ...meds.map(
+              (m) => ListTile(
+                dense: true,
+                leading: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight,
+                    borderRadius: AppRadius.smBorder,
+                  ),
+                  child: const Icon(Icons.medication,
+                      color: AppColors.primary, size: 16),
+                ),
+                title: Text(m.name, style: AppTextStyles.body),
+                subtitle: Text(
+                  '${_formatAmount(m.dosageAmount)} ${m.dosageUnit.name}'
+                  '${_instructionLabel(m)}',
+                  style: AppTextStyles.caption,
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIntakeTile(Map<String, dynamic> intake) {
+    final status   = intake['status']  as String? ?? 'PENDING';
+    final timing   = intake['timing']  as String? ?? '';
+    final start    = _formatTime(intake['windowStartTime'] as String? ?? '');
+    final end      = _formatTime(intake['windowEndTime']   as String? ?? '');
+    final color    = _statusColor(status);
+    final meds     = _medicinesForTiming(timing);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppRadius.lgBorder,
+        border: Border.all(color: AppColors.border),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: _timingColor(timing).withValues(alpha: 0.12),
+              borderRadius: AppRadius.mdBorder,
+            ),
+            child: Icon(_timingIcon(timing),
+                color: _timingColor(timing), size: 20),
+          ),
+          title: Text(_capitalize(timing), style: AppTextStyles.bodyLg),
+          subtitle: start.isNotEmpty && end.isNotEmpty
+              ? Text('$start – $end', style: AppTextStyles.bodySm)
+              : null,
+          trailing: _StatusBadge(status: status, color: color),
+          children: [
+            const Divider(height: 1),
+            if (meds.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Text('No medicines for this window',
+                    style: AppTextStyles.bodySm),
+              )
+            else
+              ...meds.map(
+                (m) => ListTile(
+                  dense: true,
+                  leading: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      borderRadius: AppRadius.smBorder,
+                    ),
+                    child: const Icon(Icons.medication,
+                        color: AppColors.primary, size: 16),
+                  ),
+                  title: Text(m.name, style: AppTextStyles.body),
+                  subtitle: Text(
+                    '${_formatAmount(m.dosageAmount)} ${m.dosageUnit.name}'
+                    '${_instructionLabel(m)}',
+                    style: AppTextStyles.caption,
+                  ),
+                ),
+              ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAlertCard(Map<String, dynamic> alert) {
+    final message  = alert['message']  as String? ?? '';
+    final sentTime = alert['sentTime'] as String? ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.error.withValues(alpha: 0.05),
+        borderRadius: AppRadius.lgBorder,
+        border: Border.all(color: AppColors.error.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.error.withValues(alpha: 0.12),
+              borderRadius: AppRadius.mdBorder,
+            ),
+            child: const Icon(Icons.warning_amber_rounded,
+                color: AppColors.error, size: 18),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message, style: AppTextStyles.body),
+                if (sentTime.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(_formatTime(sentTime), style: AppTextStyles.caption),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String text) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        child: Text(text,
+            style:
+                AppTextStyles.body.copyWith(color: AppColors.textSecondary)),
+      );
+
+  // ── Helpers ───────────────────────────────────────────────────
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'TAKEN':     return AppColors.success;
+      case 'MISSED':    return AppColors.error;
+      case 'POSTPONED': return AppColors.warning;
+      case 'SKIPPED':   return AppColors.textSecondary;
+      default:          return AppColors.warning;
+    }
+  }
+
+  IconData _timingIcon(String timing) {
+    switch (timing.toUpperCase()) {
+      case 'MORNING': return Icons.wb_twilight;
+      case 'NOON':    return Icons.wb_sunny_outlined;
+      case 'EVENING': return Icons.nights_stay_outlined;
+      default:        return Icons.schedule;
+    }
+  }
+
+  Color _timingColor(String timing) {
+    switch (timing.toUpperCase()) {
+      case 'MORNING': return const Color(0xFFF59F0A);
+      case 'NOON':    return AppColors.primary;
+      case 'EVENING': return const Color(0xFF7C6EF8);
+      default:        return AppColors.textSecondary;
+    }
+  }
+
+  String _capitalize(String s) =>
+      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1).toLowerCase();
+
+  String _formatTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  String _formatAmount(double amount) =>
+      amount == amount.truncateToDouble()
+          ? amount.toInt().toString()
+          : amount.toString();
+
+  String _instructionLabel(Medicine m) {
+    switch (m.instructionOption) {
+      case InstructionOption.afterFood:    return ' · after food';
+      case InstructionOption.emptyStomach: return ' · empty stomach';
+      case InstructionOption.other:
+        return m.instructions != null ? ' · ${m.instructions}' : '';
+    }
+  }
+}
+
+// ── Status Badge ──────────────────────────────────────────────
+
+class _StatusBadge extends StatelessWidget {
+  final String status;
+  final Color color;
+
+  const _StatusBadge({required this.status, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: AppRadius.smBorder,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(
+            _label,
+            style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w600, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String get _label {
+    switch (status) {
+      case 'TAKEN':     return 'Taken';
+      case 'MISSED':    return 'Missed';
+      case 'POSTPONED': return 'Postponed';
+      case 'SKIPPED':   return 'Skipped';
+      default:          return 'Pending';
+    }
+  }
+
+  IconData get _icon {
+    switch (status) {
+      case 'TAKEN':     return Icons.check_circle_outline;
+      case 'MISSED':    return Icons.cancel_outlined;
+      case 'POSTPONED': return Icons.access_time;
+      case 'SKIPPED':   return Icons.remove_circle_outline;
+      default:          return Icons.radio_button_unchecked;
+    }
+  }
+}

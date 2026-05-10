@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../screens/caregiver_screen.dart';
 import '../theme/app_theme.dart';
 
 class AppSidebar extends StatelessWidget {
@@ -72,6 +73,18 @@ class AppSidebar extends StatelessWidget {
                 onTap: () {
                   Navigator.pop(context);
                   onEditMedicines?.call();
+                },
+              ),
+              const Divider(height: AppSpacing.xl),
+              _SidebarItem(
+                icon: Icons.supervisor_account_outlined,
+                label: 'Caregiver View',
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const CaregiverScreen()),
+                  );
                 },
               ),
             ],

@@ -27,6 +27,12 @@ public class Medicine {
     @Column(nullable = false)
     private Timing timing;
 
+    @Column(name = "dosage_amount")
+    private Double dosageAmount;
+
+    @Column(name = "dosage_unit")
+    private String dosageUnit;
+
     @Column(name = "pre_intake_notice_minutes")
     private Integer preIntakeNoticeMinutes;
 
