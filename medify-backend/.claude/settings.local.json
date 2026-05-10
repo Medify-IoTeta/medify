@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs -I {} find {} -type f -name \"*.java\")",
+      "Bash(xargs -I {} find {} -type f \\\\\\( -name \"*.properties\" -o -name \"*.yml\" -o -name \"*.yaml\" \\\\\\))"
+    ]
+  }
+}

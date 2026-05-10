@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: medify-db
+    environment:
+      POSTGRES_DB: medify
+      POSTGRES_USER: medify_user
+      POSTGRES_PASSWORD: medify_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - medify_data:/var/lib/postgresql/data
+
+volumes:
+  medify_data:
