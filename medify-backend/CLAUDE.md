@@ -54,8 +54,8 @@ All endpoints under `/api/*` with `@CrossOrigin(origins = "*")`.
 |--------|------|-------------|
 | GET | `/api/notification` | Poll for pending notification |
 | POST | `/api/notification` | Send user response (confirm/snooze/skip) |
-| GET | `/api/medicines` | List all medicines |
-| POST | `/api/medicines` | Register a new medicine |
+| GET | `/api/medications` | List all medicines |
+| POST | `/api/medications` | Register a new medicine |
 | GET | `/api/intakes/today` | Today's intakes for userId=1 |
 | PATCH | `/api/intakes/{id}/approve` | User approved intake |
 | PATCH | `/api/intakes/{id}/released` | Device confirmed compartment emptied → TAKEN |

@@ -48,7 +48,7 @@ Medicines are grouped by timing window (MORNING / NOON / EVENING) using `Expansi
 - On confirm: marks only medicines of the matching `timing` window as `taken` in local state
 
 ### Caregiver Screen
-Loads in parallel: `getTodayIntakes()`, `getMedicines()`, `getNotificationsLog(userId=2)`.
+Loads in parallel: `getTodayIntakes()`, `getMedicines()`, `getNotificationsLog(_caregiverUserId)`.
 - **Summary card** — `taken / totalWindows` windows completed (total based on medicines, not intakes)
 - **Medication Schedule** — always visible, grouped by window, expandable
 - **Today's Intake Status** — intake records from backend, expandable per window
@@ -60,8 +60,8 @@ Base URL: `http://localhost:8080`
 
 | Method | Description |
 |--------|-------------|
-| `getMedicines()` | GET /api/medicines |
-| `registerMedicine(medicine)` | POST /api/medicines |
+| `getMedicines()` | GET /api/medications |
+| `registerMedicine(medicine)` | POST /api/medications |
 | `getNotification()` | GET /api/notification — returns `{status, message, intakeId, timing}` |
 | `sendNotification(message, intakeId)` | POST /api/notification |
 | `getTodayIntakes()` | GET /api/intakes/today |
@@ -69,7 +69,7 @@ Base URL: `http://localhost:8080`
 | `releaseIntake(id)` | PATCH /api/intakes/{id}/released |
 | `skipIntake(id)` | PATCH /api/intakes/{id}/skip |
 | `postponeIntake(id)` | PATCH /api/intakes/{id}/postpone |
-| `getNotificationsLog(userId)` | GET /api/notifications-log?userId={id} |
+| `getNotificationsLog(userId, {from, to})` | GET /api/notifications-log?userId={id}[&from=&to=] |
 | `dispenseFromDevice()` | GET http://192.168.7.18/move (embedded device) |
 
 ## Models

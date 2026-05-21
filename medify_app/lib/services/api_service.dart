@@ -7,7 +7,7 @@ class ApiService {
   static const String embeddedBaseUrl = 'http://192.168.7.18'; // embedded url
 
   Future<List<Medicine>> getMedicines() async {
-    final url = Uri.parse('$baseUrl/api/medicines');
+    final url = Uri.parse('$baseUrl/api/medications');
     final response = await http.get(url);
 
     if (response.statusCode == 200) {
@@ -19,7 +19,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> registerMedicine(Medicine medicine) async {
-    final url = Uri.parse('$baseUrl/api/medicines');
+    final url = Uri.parse('$baseUrl/api/medications');
 
     final response = await http.post(
       url,
@@ -122,8 +122,15 @@ class ApiService {
 
   // ── Caregiver ─────────────────────────────────────────────────
 
-  Future<List<Map<String, dynamic>>> getNotificationsLog(int userId) async {
-    final url = Uri.parse('$baseUrl/api/notifications-log?userId=$userId');
+  Future<List<Map<String, dynamic>>> getNotificationsLog(
+    int userId, {
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final params = {'userId': '$userId'};
+    if (from != null) params['from'] = from.toIso8601String();
+    if (to != null) params['to'] = to.toIso8601String();
+    final url = Uri.parse('$baseUrl/api/notifications-log').replace(queryParameters: params);
     final response = await http.get(url);
 
     if (response.statusCode == 200) {
