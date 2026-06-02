@@ -29,9 +29,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadMedicines() async {
     try {
-      final medicines = await _apiService.getMedicines();
+      final results = await Future.wait([
+        _apiService.getMedicines(),
+        _apiService.getTodayIntakes(),
+      ]);
+      final medicines = results[0] as List<Medicine>;
+      final intakes   = results[1] as List<Map<String, dynamic>>;
+
+      final takenTimings = intakes
+          .where((i) => i['status'] == 'TAKEN')
+          .map((i) => (i['timing'] as String).toUpperCase())
+          .toSet();
+
       if (!mounted) return;
-      setState(() => _medicines.addAll(medicines));
+      setState(() {
+        _medicines.addAll(medicines.map((m) {
+          final inTaken = takenTimings.contains(m.timePeriod.name.toUpperCase());
+          return inTaken ? m.copyWith(status: MedicationStatus.taken) : m;
+        }));
+      });
     } catch (e) {
       debugPrint('Failed to load medicines: $e');
     }
@@ -298,7 +314,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       drawer: AppSidebar(
         onAddMedicine: _goToRegister,
-        onTakeManually: () {},
         onEditMedicines: () {},
       ),
       body: Padding(

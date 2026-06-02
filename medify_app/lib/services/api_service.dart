@@ -3,7 +3,8 @@ import 'package:http/http.dart' as http;
 import '../models/medicine.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:8080';
+  //static const String baseUrl = 'http://localhost:8080'; // for browser
+  static const String baseUrl = 'http://192.168.7.17:8080'; // for android
   static const String embeddedBaseUrl = 'http://192.168.7.18'; // embedded url
 
   Future<List<Medicine>> getMedicines() async {
@@ -145,11 +146,17 @@ class ApiService {
 
   Future<bool> dispenseFromDevice() async {
     final url = Uri.parse('$embeddedBaseUrl/move');
-    final response = await http.get(url);
+    final response = await http.get(url).timeout(const Duration(seconds: 15));
 
     if (response.statusCode == 200) {
-      final Map<String, dynamic> body = jsonDecode(response.body);
-      return body['status'] == 'OK';
+      final body = response.body.trim();
+      try {
+        final json = jsonDecode(body) as Map<String, dynamic>;
+        return json['status'] == 'OK';
+      } catch (_) {
+        // device returned plain text (e.g. "OK")
+        return body.toUpperCase() == 'OK';
+      }
     }
 
     throw Exception('Failed to dispense from device: ${response.statusCode}');

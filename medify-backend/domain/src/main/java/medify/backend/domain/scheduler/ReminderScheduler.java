@@ -31,17 +31,17 @@ public class ReminderScheduler {
         this.notificationPort = notificationPort;
     }
 
-    @Scheduled(cron = "0 0 8 * * *")
+    @Scheduled(cron = "0 05 22 * * *")
     public void sendMorningReminder() {
         sendReminder(Timing.MORNING);
     }
 
-    @Scheduled(cron = "0 0 13 * * *")
+    @Scheduled(cron = "0 10 22 * * *")
     public void sendNoonReminder() {
         sendReminder(Timing.NOON);
     }
 
-    @Scheduled(cron = "0 17 20 * * *")
+    @Scheduled(cron = "0 30 22 * * *")
     public void sendEveningReminder() {
         sendReminder(Timing.EVENING);
     }
@@ -70,18 +70,6 @@ public class ReminderScheduler {
         String timingLabel = timing.name().charAt(0) + timing.name().substring(1).toLowerCase();
         logger.info("Sending {} reminder for: {}, intake id={}", timing, names, saved.getId());
         notificationPort.send("Time to take your " + timingLabel + " medicines", saved.getId(), timing.name());
-    }
-
-    public void scheduleImmediateReminder(String medicineName) {
-        new Thread(() -> {
-            try {
-                logger.info("Scheduling immediate reminder for {} in 1 minute", medicineName);
-                Thread.sleep(60_000);
-                notificationPort.send("Reminder: take your " + medicineName, null, null);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }).start();
     }
 
     public void snoozeByIntakeId(Long intakeId, int minutes) {
