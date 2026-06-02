@@ -46,6 +46,13 @@ ReminderScheduler.sendReminder(timing)
   → POST /api/notification handles: snooze_15, snooze_custom:HH:MM, skip, or confirm
 ```
 
+Scheduled cron times (currently set to demo/test times):
+- MORNING → `0 05 22 * * *` (22:05)
+- NOON    → `0 10 22 * * *` (22:10)
+- EVENING → `0 30 22 * * *` (22:30)
+
+Production times would be 08:00 / 13:00 / 20:00 — change cron expressions in `ReminderScheduler.java`.
+
 ## REST API
 
 All endpoints under `/api/*` with `@CrossOrigin(origins = "*")`.
@@ -61,6 +68,7 @@ All endpoints under `/api/*` with `@CrossOrigin(origins = "*")`.
 | PATCH | `/api/intakes/{id}/released` | Device confirmed compartment emptied → TAKEN |
 | PATCH | `/api/intakes/{id}/skip` | User skipped intake |
 | PATCH | `/api/intakes/{id}/postpone` | User postponed intake |
+| PATCH | `/api/intakes/{id}/missed` | Mark intake as MISSED |
 | GET | `/api/notifications-log` | Notification history (query param: userId) |
 
 ## Database

@@ -62,15 +62,18 @@ The server starts on `http://localhost:8080`.
 | PATCH | `/api/intakes/{id}/released` | Device confirmed compartment emptied → TAKEN |
 | PATCH | `/api/intakes/{id}/skip` | User skipped intake |
 | PATCH | `/api/intakes/{id}/postpone` | User postponed intake |
+| PATCH | `/api/intakes/{id}/missed` | Mark intake as MISSED |
 | GET | `/api/notifications-log` | Notification history (`?userId=`) |
 
 ## Notification Flow
 
-1. Scheduler fires at 08:00 / 13:00 / 20:00
+1. Scheduler fires at scheduled time (currently demo times: 22:05 / 22:10 / 22:30)
 2. Creates one `Intake` record per timing window
 3. Sends notification: `"Time to take your morning medicines"`
 4. Frontend polls `GET /api/notification` and shows a dialog
 5. User confirms → `approve` → device dispenses → `released` → intake marked as TAKEN
+
+> To switch to production times (08:00 / 13:00 / 20:00), update the `@Scheduled` cron expressions in `ReminderScheduler.java`.
 
 ## Database
 

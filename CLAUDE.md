@@ -25,7 +25,7 @@ Mobile App (Flutter)         ──REST──► Backend (Spring Boot)
 
 ## Core Domain Concepts
 
-- **Timing** — Three intake windows per day: `MORNING` (08:00), `NOON` (13:00), `EVENING` (20:00)
+- **Timing** — Three intake windows per day: `MORNING`, `NOON`, `EVENING` (currently scheduled at 22:05/22:10/22:30 for demo — production times are 08:00/13:00/20:00)
 - **Medicine** — A prescribed medication assigned to one timing window, with dosage and instructions
 - **Intake** — One record per timing window per day; tracks status: `PENDING → APPROVED → TAKEN` (or `MISSED`, `SKIPPED`, `POSTPONED`)
 - **Notification** — Backend queues one notification per timing window; frontend polls and shows a dialog

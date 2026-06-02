@@ -66,6 +66,8 @@ lib/
 Backend URL is set in `lib/services/api_service.dart`:
 
 ```dart
-static const String baseUrl = 'http://localhost:8080';
+// Switch between these two depending on target:
+//static const String baseUrl = 'http://localhost:8080'; // browser / emulator
+static const String baseUrl = 'http://192.168.7.17:8080'; // Android device (active)
 static const String embeddedBaseUrl = 'http://192.168.7.18'; // pill box device
 ```
