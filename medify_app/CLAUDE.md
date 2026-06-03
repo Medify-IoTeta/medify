@@ -21,7 +21,7 @@ lib/
 ├── models/
 │   └── medicine.dart          # Medicine, TimePeriod, DosageUnit, InstructionOption, MedicationStatus
 ├── services/
-│   └── api_service.dart       # All HTTP calls to backend (localhost:8080)
+│   └── api_service.dart       # All HTTP calls to backend (192.168.7.17:8080 for Android)
 ├── widgets/
 │   ├── medication_card.dart   # Single medicine card with status badge
 │   ├── app_sidebar.dart       # Navigation drawer
@@ -39,13 +39,19 @@ Medicines are grouped by timing window (MORNING / NOON / EVENING) using `Expansi
 - `_totalWindows` — number of timing windows that have at least one medicine
 - `_completedWindows` — windows where **all** medicines are status `taken`
 - Displayed in `ProgressRing` and subtitle ("X windows remaining")
+- On init: loads medicines + today's intakes in parallel; medicines whose timing window is TAKEN are marked `taken` in local state
 
 ### Notification Polling
 `HomeScreen` polls `GET /api/notification` every 3 seconds. On response:
 - Shows a dialog with the timing window name
-- "Show medicines ▼" expands to list medicines in that window
-- Actions: Choose Time (snooze to specific time), Remind in 15 min, OK (confirm)
-- On confirm: marks only medicines of the matching `timing` window as `taken` in local state
+- "Show medicines ▼" / "Hide medicines" toggle expands to list medicines in that window with dosage
+- Actions: Choose Time (snooze to specific time → postponeIntake + snooze_custom:HH:MM), Remind in 15 min (postponeIntake + snooze_15), OK (confirm)
+- On confirm: approveIntake → dispenseFromDevice → releaseIntake → marks only medicines in the confirmed timing window as `taken` in local state
+
+### Sidebar (AppSidebar)
+Items: **Home**, **Add Medicine**, **Edit Medicines**, **Caregiver View**.
+Props: `onAddMedicine`, `onEditMedicines` (both optional callbacks).
+"Take Medication Manually" was removed.
 
 ### Caregiver Screen
 Loads in parallel: `getTodayIntakes()`, `getMedicines()`, `getNotificationsLog(_caregiverUserId)`.
@@ -56,7 +62,10 @@ Loads in parallel: `getTodayIntakes()`, `getMedicines()`, `getNotificationsLog(_
 
 ## API Calls (api_service.dart)
 
-Base URL: `http://localhost:8080`
+Base URLs:
+- `http://192.168.7.17:8080` — Android device (active)
+- `http://localhost:8080` — browser/emulator (commented out in code)
+- `http://192.168.7.18` — embedded pill box device
 
 | Method | Description |
 |--------|-------------|
@@ -70,7 +79,7 @@ Base URL: `http://localhost:8080`
 | `skipIntake(id)` | PATCH /api/intakes/{id}/skip |
 | `postponeIntake(id)` | PATCH /api/intakes/{id}/postpone |
 | `getNotificationsLog(userId, {from, to})` | GET /api/notifications-log?userId={id}[&from=&to=] |
-| `dispenseFromDevice()` | GET http://192.168.7.18/move (embedded device) |
+| `dispenseFromDevice()` | GET http://192.168.7.18/move — 15s timeout, handles JSON or plain-text "OK" |
 
 ## Models
 

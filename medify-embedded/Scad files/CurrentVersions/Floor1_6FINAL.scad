@@ -1,4 +1,4 @@
-// Medify - Floor 1: Middle Core (WITH DOOR HINGE SUPPORTS)
+// Medify - Floor 1: Middle Core (WITH THICKENED IR RECEIVER WALL + CIRCULAR RECESS)
 
 module Floor1_Final_Design() {
     $fn = 100;
@@ -6,7 +6,11 @@ module Floor1_Final_Design() {
     dia = 120; height = 50; 
     outer_wall = 3; inner_wall = 2; 
     chute_side_wall = 1.5;
-    chute_floor_raise = 2;
+    receiver_side_wall = 6;
+    short_tunnel_extra = 6;
+    short_tunnel_block_x = 12;
+    short_tunnel_block_h = 12;
+    chute_floor_raise = 3;
 
     chute_w = 34; chute_d = 43.5; chute_y_pos = -7;  
     ir_x_pos = -dia/2 + 12; 
@@ -23,9 +27,10 @@ module Floor1_Final_Design() {
     ir_center_z = ir_z_height + ir_z_shift;
 
     ir_led_x_offset = -5;
-    ir_led_z_offset = -0.5;
-    ir_led_hole_d = 4.5;
-    ir_led_hole_depth = 10;
+    ir_led_z_offset = 0;
+    ir_led_hole_d = 3.3;
+    ir_receiver_hole_d = 3.3;
+    ir_led_hole_depth = 16;
 
     ir_ring_d = 8.8;
     ir_ring_depth = 1.4;
@@ -88,7 +93,7 @@ module Floor1_Final_Design() {
         rotate([0, 0, chute_rotation])
             translate([
                 ir_center_x,
-                chute_y_pos + chute_w/2 + ir_module_w/2,
+                chute_y_pos + chute_w/2 - inner_wall + receiver_side_wall + ir_module_w/2 + 0.5,
                 ir_center_z
             ])
                 cube([
@@ -117,17 +122,24 @@ module Floor1_Final_Design() {
     module ir_led_holes() {
         rotate([0, 0, chute_rotation]) {
 
+            // Receiver side - narrow tunnel through thickened wall
             translate([
                 ir_led_hole_x,
-                chute_y_pos + chute_w/2,
+                chute_y_pos + chute_w/2 - inner_wall + receiver_side_wall/2,
                 ir_led_hole_z
             ])
                 rotate([90, 0, 0])
-                    cylinder(h = ir_led_hole_depth, d = ir_led_hole_d, center = true);
+                    cylinder(
+                        h = receiver_side_wall + 4,
+                        d = ir_receiver_hole_d,
+                        center = true
+                    );
 
+            // Receiver side - circular recessed pocket on the OUTER face
+            // This is a subtraction, not an added bump.
             translate([
                 ir_led_hole_x,
-                chute_y_pos + chute_w/2 - ir_ring_depth/2,
+                chute_y_pos + chute_w/2 - inner_wall + receiver_side_wall - ir_ring_depth/2,
                 ir_led_hole_z
             ])
                 rotate([90, 0, 0])
@@ -174,7 +186,7 @@ module ir_lock_screw_holes() {
         // Left IR - side stopper screw
         translate([
             ir_center_x + 2,
-            chute_y_pos + chute_w/2 + ir_module_w + 1.3,
+            chute_y_pos + chute_w/2 - inner_wall + receiver_side_wall + ir_module_w + 1.3,
             -1
         ])
             cylinder(h = 14, d = ir_lock_screw_d);
@@ -182,7 +194,7 @@ module ir_lock_screw_holes() {
         // Left IR - upper stopper screw
         translate([
             ir_center_x - ir_module_len/2 - 1.3,
-            chute_y_pos + chute_w/2 + ir_module_w/2,
+            chute_y_pos + chute_w/2 - inner_wall + receiver_side_wall + ir_module_w/2,
             -1
         ])
             cylinder(h = outer_wall + 3, d = ir_lock_screw_d);
@@ -190,7 +202,7 @@ module ir_lock_screw_holes() {
         // Left IR - bottom stopper screw
         translate([
             ir_center_x + ir_module_len/2 + 1.3,
-            chute_y_pos + chute_w/2 + ir_module_w/2,
+            chute_y_pos + chute_w/2 - inner_wall + receiver_side_wall + ir_module_w/2,
             -1
         ])
             cylinder(h = outer_wall + 3, d = ir_lock_screw_d);
@@ -235,7 +247,7 @@ module ir_lock_screw_holes() {
                     washer_holder_z
                 ])
                     cube([
-                        washer_holder_t + washer_holder_wall_overlap,
+                        washer_holder_t + washer_holder_wall_overlap +0.5,
                         washer_holder_w,
                         washer_holder_h
                     ]);
@@ -284,7 +296,7 @@ module ir_lock_screw_holes() {
                                     ]);
 
                                 translate([
-                                    20,
+                                    19.7,
                                     inner_wall + 0.15,
                                     chute_floor_raise
                                 ])
@@ -297,43 +309,37 @@ module ir_lock_screw_holes() {
 
                             color("orange")
                             translate([0.15, inner_wall + 0.15, chute_floor_raise])
+                                hull() {
 
-                                polyhedron(
+                                    // High side - matches the original polyhedron height at x=0
+                                    translate([0, 0, 0])
+                                        cube([
+                                            0.2,
+                                            chute_w - 2*inner_wall - 0.3,
+                                            4.2
+                                        ]);
 
-                                    points = [
+                                    // Low side - matches the original polyhedron height at x=15
+                                    translate([14.5, 0, 0])
+                                        cube([
+                                            0.2,
+                                            chute_w - 2*inner_wall - 0.3,
+                                            0.4
+                                        ]);
+                                };
 
-                                        [0, 0, 0],
-                                        [15.0, 0, 0],
-                                        [15.0, chute_w - 2*inner_wall - 0.3, 0],
-                                        [0, chute_w - 2*inner_wall - 0.3, 0],
-
-                                        [0, 0, 4.2],
-                                        [15.0, 0, 0.4],
-                                        [15.0, chute_w - 2*inner_wall - 0.3, 0.4],
-                                        [0, chute_w - 2*inner_wall - 0.3, 4.2]
-                                    ],
-
-                                    faces = [
-                                        [0,1,2,3],
-                                        [4,7,6,5],
-                                        [0,4,5,1],
-                                        [1,5,6,2],
-                                        [2,6,7,3],
-                                        [3,7,4,0]
-                                    ]
-                                );
-
+                            // Receiver side wall - thickened for IR tunnel
                             translate([0, chute_w - inner_wall, 0])
                                 cube([
                                     chute_d,
-                                    chute_side_wall,
+                                    receiver_side_wall,
                                     height - outer_wall
                                 ]); 
 
                             translate([0, inner_wall - chute_side_wall, 0])
                                 cube([
                                     chute_d,
-                                    chute_side_wall,
+                                    chute_side_wall + 4.5,
                                     height - outer_wall
                                 ]); 
 
@@ -436,12 +442,12 @@ module ir_lock_screw_holes() {
         rotate([0, 0, chute_rotation]) {
 
             translate([
-                -dia/2 + 5,
+                -dia/2 + 5.2,
                 chute_y_pos + chute_w/2 - 5,
                 height - 8
             ])
 
-                cube([8, 10, 10]);
+                cube([8, 10.5, 10]);
         }
         
         for(angle = [-45, 105])

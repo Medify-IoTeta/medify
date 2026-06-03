@@ -5,13 +5,11 @@ import '../theme/app_theme.dart';
 
 class AppSidebar extends StatelessWidget {
   final VoidCallback? onAddMedicine;
-  final VoidCallback? onTakeManually;
   final VoidCallback? onEditMedicines;
 
   const AppSidebar({
     super.key,
     this.onAddMedicine,
-    this.onTakeManually,
     this.onEditMedicines,
   });
 
@@ -50,14 +48,6 @@ class AppSidebar extends StatelessWidget {
                 icon: Icons.home_outlined,
                 label: 'Home',
                 onTap: () => Navigator.pop(context),
-              ),
-              _SidebarItem(
-                icon: Icons.pan_tool_outlined,
-                label: 'Take Medication Manually',
-                onTap: () {
-                  Navigator.pop(context);
-                  onTakeManually?.call();
-                },
               ),
               _SidebarItem(
                 icon: Icons.add_circle_outline,
