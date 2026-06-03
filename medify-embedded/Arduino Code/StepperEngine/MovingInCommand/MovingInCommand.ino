@@ -80,6 +80,7 @@ void loop() {
             // שליחת HTTP Response
             client.println("HTTP/1.1 200 OK");
             client.println("Content-type:text/plain");
+            client.println("Access-Control-Allow-Origin: *");
             client.println();
             client.println("{\"status\":\"OK\",\"slot\":" + String(currentSlot) + "}");
             break;
