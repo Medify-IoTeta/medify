@@ -55,7 +55,7 @@ void loop() {
     currentSlot++;
 
     if (currentSlot < TOTAL_SLOTS) {
-      delay(10000); // המתנה של 10 שניות בין תאים
+      delay(100000); // המתנה של 100 שניות בין תאים
     }
   } 
   else {
