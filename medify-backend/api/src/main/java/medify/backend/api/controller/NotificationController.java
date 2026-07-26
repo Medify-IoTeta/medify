@@ -2,6 +2,7 @@ package medify.backend.api.controller;
 
 import medify.backend.api.notification.NotificationAdapter;
 import medify.backend.api.service.IntakeService;
+import medify.backend.domain.model.Timing;
 import medify.backend.domain.scheduler.ReminderScheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,12 @@ public class NotificationController {
             return result;
         }
         return Map.of("status", "EMPTY");
+    }
+
+    @PostMapping("/test")
+    public Map<String, String> triggerTest() {
+        reminderScheduler.sendReminder(Timing.MORNING);
+        return Map.of("status", "OK");
     }
 
     @PostMapping

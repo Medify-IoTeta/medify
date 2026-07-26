@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 
 import '../models/medicine.dart';
@@ -26,6 +27,19 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadMedicines();
     _startPolling();
+    _registerFcmToken();
+  }
+
+  Future<void> _registerFcmToken() async {
+    try {
+      await FirebaseMessaging.instance.requestPermission();
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await _apiService.registerFcmToken(1, token);
+      }
+    } catch (e) {
+      debugPrint('FCM token registration failed: $e');
+    }
   }
 
   Future<void> _loadMedicines() async {

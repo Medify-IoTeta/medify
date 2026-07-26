@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "520844868724",
+    "project_id": "medify-1a9c2",
+    "storage_bucket": "medify-1a9c2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:520844868724:android:7b6bf78f21c2120d64a521",
+        "android_client_info": {
+          "package_name": "com.example.medify_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBWpLUkh87PAmSUROkpwRrn4RNxzG3aSLg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

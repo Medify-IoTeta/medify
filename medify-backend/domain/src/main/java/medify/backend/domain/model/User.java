@@ -30,4 +30,7 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserType type;
+
+    @Column(name = "fcm_token")
+    private String fcmToken;
 }

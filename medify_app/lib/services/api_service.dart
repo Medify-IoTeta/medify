@@ -211,6 +211,17 @@ class ApiService {
     throw Exception('Failed to get notifications log: ${response.statusCode}');
   }
 
+  // ── FCM Token ─────────────────────────────────────────────────
+
+  Future<void> registerFcmToken(int userId, String token) async {
+    final url = Uri.parse('$baseUrl/api/users/$userId/fcm-token');
+    await http.put(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'token': token}),
+    );
+  }
+
   // ── Device ────────────────────────────────────────────────────
 
   Future<bool> dispenseFromDevice() async {
