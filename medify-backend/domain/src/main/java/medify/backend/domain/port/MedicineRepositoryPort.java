@@ -10,4 +10,5 @@ public interface MedicineRepositoryPort {
     List<Medicine> findAll();
     Optional<Medicine> findById(Long id);
     List<Medicine> findByTiming(Timing timing);
+    void deleteById(Long id);
 }

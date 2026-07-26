@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "medications")
@@ -41,4 +42,7 @@ public class Medicine {
 
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
+
+    @Column(name = "disabled_until")
+    private LocalDateTime disabledUntil;
 }

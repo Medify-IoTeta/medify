@@ -35,4 +35,9 @@ public class MedicineRepository implements MedicineRepositoryPort {
     public List<Medicine> findByTiming(Timing timing) {
         return jpaRepository.findByTiming(timing);
     }
+
+    @Override
+    public void deleteById(Long id) {
+        jpaRepository.deleteById(id);
+    }
 }

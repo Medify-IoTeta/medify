@@ -58,8 +58,12 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
   int get _takenCount =>
       _todayIntakes.where((i) => i['status'] == 'TAKEN').length;
 
+  bool _isScheduled(Medicine m) =>
+      m.enabled &&
+      (m.disabledUntil == null || m.disabledUntil!.isBefore(DateTime.now()));
+
   List<Medicine> _medicinesForTiming(String timing) => _medicines
-      .where((m) => m.timePeriod.name.toUpperCase() == timing.toUpperCase())
+      .where((m) => m.timePeriod.name.toUpperCase() == timing.toUpperCase() && _isScheduled(m))
       .toList();
 
   // ── Build ─────────────────────────────────────────────────────
@@ -76,6 +80,10 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
               setState(() => _loading = true);
               _load();
             },
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Image.asset('assets/medify-logo.png', height: 40),
           ),
         ],
       ),
@@ -473,6 +481,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
 
   String _instructionLabel(Medicine m) {
     switch (m.instructionOption) {
+      case InstructionOption.none:         return ' · none';
       case InstructionOption.afterFood:    return ' · after food';
       case InstructionOption.emptyStomach: return ' · empty stomach';
       case InstructionOption.other:

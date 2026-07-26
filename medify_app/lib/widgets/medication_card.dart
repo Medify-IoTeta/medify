@@ -62,12 +62,10 @@ class MedicationCard extends StatelessWidget {
 
   String get _instructionLabel {
     switch (medicine.instructionOption) {
-      case InstructionOption.afterFood:
-        return 'After food';
-      case InstructionOption.emptyStomach:
-        return 'Empty stomach';
-      case InstructionOption.other:
-        return medicine.instructions ?? '';
+      case InstructionOption.none:         return 'None';
+      case InstructionOption.afterFood:    return 'After food';
+      case InstructionOption.emptyStomach: return 'Empty stomach';
+      case InstructionOption.other:        return medicine.instructions ?? '';
     }
   }
 }

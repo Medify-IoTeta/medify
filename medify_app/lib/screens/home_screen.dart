@@ -7,6 +7,7 @@ import '../widgets/app_sidebar.dart';
 import '../widgets/medication_card.dart';
 import '../widgets/progress_ring.dart';
 import 'register_screen.dart';
+import 'edit_medicines_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -84,8 +85,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   int get _takenCount => _completed.length;
 
+  bool _isScheduled(Medicine m) =>
+      m.enabled &&
+      (m.disabledUntil == null || m.disabledUntil!.isBefore(DateTime.now()));
+
   List<Medicine> _medicinesForTiming(String timing) => _medicines
-      .where((m) => m.timePeriod.name.toUpperCase() == timing)
+      .where((m) => m.timePeriod.name.toUpperCase() == timing && _isScheduled(m))
       .toList();
 
   IconData _timingIcon(String timing) {
@@ -136,6 +141,16 @@ class _HomeScreenState extends State<HomeScreen> {
     if (newMedicine != null) {
       setState(() => _medicines.add(newMedicine));
     }
+  }
+
+  Future<void> _goToEdit() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const EditMedicinesScreen()),
+    );
+    // Reload medicines after editing (deletions/disables may have changed state)
+    setState(() => _medicines.clear());
+    _loadMedicines();
   }
 
   // ── Polling ──────────────────────────────────────────────────
@@ -305,6 +320,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Medify'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Image.asset('assets/medify-logo.png', height: 40),
+          ),
+        ],
         leading: Builder(
           builder: (context) => IconButton(
             icon: const Icon(Icons.menu),
@@ -314,7 +335,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       drawer: AppSidebar(
         onAddMedicine: _goToRegister,
-        onEditMedicines: () {},
+        onEditMedicines: _goToEdit,
       ),
       body: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),

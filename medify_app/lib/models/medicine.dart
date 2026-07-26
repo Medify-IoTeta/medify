@@ -1,10 +1,23 @@
+DateTime? _parseDateTime(dynamic value) {
+  if (value == null) return null;
+  if (value is String) return DateTime.tryParse(value);
+  if (value is List && value.length >= 5) {
+    // Jackson default: [year, month, day, hour, minute, second?, nano?]
+    return DateTime(
+      value[0] as int, value[1] as int, value[2] as int,
+      value[3] as int, value[4] as int,
+    );
+  }
+  return null;
+}
+
 enum MedicationStatus { taken, pending, missed }
 
 enum DosageUnit { pills, mg, ml, drops, units }
 
 enum TimePeriod { morning, noon, evening, other }
 
-enum InstructionOption { emptyStomach, afterFood, other }
+enum InstructionOption { none, afterFood, emptyStomach, other }
 
 class Medicine {
   final String id;
@@ -17,6 +30,7 @@ class Medicine {
   final InstructionOption instructionOption;
   final String? instructions;
   final bool enabled;
+  final DateTime? disabledUntil;
 
   Medicine({
     required this.id,
@@ -29,6 +43,7 @@ class Medicine {
     required this.instructionOption,
     this.instructions,
     this.enabled = true,
+    this.disabledUntil,
   });
 
   factory Medicine.fromJson(Map<String, dynamic> json) {
@@ -50,7 +65,7 @@ class Medicine {
           instructionOpt = InstructionOption.other;
           customInstructions = desc;
         } else {
-          instructionOpt = InstructionOption.afterFood;
+          instructionOpt = InstructionOption.none;
         }
     }
 
@@ -77,6 +92,7 @@ class Medicine {
       instructions: customInstructions,
       // Backend uses 'active', Flutter uses 'enabled'
       enabled: json['active'] as bool? ?? json['enabled'] as bool? ?? true,
+      disabledUntil: _parseDateTime(json['disabledUntil']),
     );
   }
 
@@ -106,6 +122,8 @@ class Medicine {
     InstructionOption? instructionOption,
     String? instructions,
     bool? enabled,
+    DateTime? disabledUntil,
+    bool clearDisabledUntil = false,
   }) {
     return Medicine(
       id: id ?? this.id,
@@ -118,6 +136,7 @@ class Medicine {
       instructionOption: instructionOption ?? this.instructionOption,
       instructions: instructions ?? this.instructions,
       enabled: enabled ?? this.enabled,
+      disabledUntil: clearDisabledUntil ? null : (disabledUntil ?? this.disabledUntil),
     );
   }
 }
