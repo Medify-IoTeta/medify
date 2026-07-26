@@ -20,4 +20,10 @@ public interface IntakeJpaRepository extends JpaRepository<Intake, Long> {
     List<Intake> findExpiredPendingIntakes(
             @Param("now") LocalDateTime now,
             @Param("statuses") List<IntakeStatus> statuses);
+
+    @Query("SELECT COUNT(i) FROM Intake i WHERE i.userId = :userId AND i.status = :status AND i.windowStartTime >= :since")
+    long countTakenSince(
+            @Param("userId") Long userId,
+            @Param("status") IntakeStatus status,
+            @Param("since") LocalDateTime since);
 }

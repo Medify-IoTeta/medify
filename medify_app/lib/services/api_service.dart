@@ -222,6 +222,39 @@ class ApiService {
     );
   }
 
+  // ── Box refill ────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> startRefill() async {
+    final url = Uri.parse('$baseUrl/api/box-refill/start');
+    final response = await http.post(url);
+    if (response.statusCode == 200) return jsonDecode(response.body);
+    throw Exception('Failed to start refill: ${response.statusCode}');
+  }
+
+  Future<Map<String, dynamic>?> getRefillState() async {
+    final url = Uri.parse('$baseUrl/api/box-refill/current');
+    final response = await http.get(url);
+    if (response.statusCode == 204) return null;
+    if (response.statusCode == 200) return jsonDecode(response.body);
+    throw Exception('Failed to get refill state: ${response.statusCode}');
+  }
+
+  Future<void> markSlotFilled(int slotNumber) async {
+    final url = Uri.parse('$baseUrl/api/box-refill/slots/$slotNumber/fill');
+    final response = await http.post(url);
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw Exception('Failed to mark slot filled: ${response.statusCode}');
+    }
+  }
+
+  Future<void> unmarkSlotFilled(int slotNumber) async {
+    final url = Uri.parse('$baseUrl/api/box-refill/slots/$slotNumber/fill');
+    final response = await http.delete(url);
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw Exception('Failed to unmark slot: ${response.statusCode}');
+    }
+  }
+
   // ── Device ────────────────────────────────────────────────────
 
   Future<bool> dispenseFromDevice() async {

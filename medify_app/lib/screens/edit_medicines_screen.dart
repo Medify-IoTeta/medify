@@ -67,7 +67,7 @@ class _EditMedicinesScreenState extends State<EditMedicinesScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Image.asset('assets/medify-logo.png', height: 40),
+            child: Image.asset('assets/medify-logo.png', height: 56),
           ),
         ],
       ),
@@ -269,7 +269,7 @@ class _EditMedicineDetailScreenState extends State<EditMedicineDetailScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Image.asset('assets/medify-logo.png', height: 40),
+            child: Image.asset('assets/medify-logo.png', height: 56),
           ),
         ],
       ),
