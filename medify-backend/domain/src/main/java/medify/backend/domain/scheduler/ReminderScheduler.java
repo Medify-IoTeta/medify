@@ -31,17 +31,17 @@ public class ReminderScheduler {
         this.notificationPort = notificationPort;
     }
 
-    @Scheduled(cron = "0 05 22 * * *")
+    @Scheduled(cron = "0 0 08 * * *")
     public void sendMorningReminder() {
         sendReminder(Timing.MORNING);
     }
 
-    @Scheduled(cron = "0 10 22 * * *")
+    @Scheduled(cron = "0 00 14 * * *")
     public void sendNoonReminder() {
         sendReminder(Timing.NOON);
     }
 
-    @Scheduled(cron = "0 30 22 * * *")
+    @Scheduled(cron = "0 30 20 * * *")
     public void sendEveningReminder() {
         sendReminder(Timing.EVENING);
     }
