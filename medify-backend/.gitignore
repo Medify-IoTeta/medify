@@ -38,5 +38,3 @@ build/
 ### Mac OS ###
 .DS_Store
 
-### Firebase credentials ###
-**/firebase-service-account.json
