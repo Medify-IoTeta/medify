@@ -83,7 +83,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
           ),
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Image.asset('assets/medify-logo.png', height: 40),
+            child: Image.asset('assets/medify-logo.png', height: 56),
           ),
         ],
       ),

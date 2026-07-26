@@ -6,11 +6,13 @@ import '../theme/app_theme.dart';
 class AppSidebar extends StatelessWidget {
   final VoidCallback? onAddMedicine;
   final VoidCallback? onEditMedicines;
+  final VoidCallback? onFillBox;
 
   const AppSidebar({
     super.key,
     this.onAddMedicine,
     this.onEditMedicines,
+    this.onFillBox,
   });
 
   @override
@@ -63,6 +65,14 @@ class AppSidebar extends StatelessWidget {
                 onTap: () {
                   Navigator.pop(context);
                   onEditMedicines?.call();
+                },
+              ),
+              _SidebarItem(
+                icon: Icons.inventory_2_outlined,
+                label: 'Fill Pill Box',
+                onTap: () {
+                  Navigator.pop(context);
+                  onFillBox?.call();
                 },
               ),
               const Divider(height: AppSpacing.xl),

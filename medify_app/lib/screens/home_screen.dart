@@ -9,6 +9,7 @@ import '../widgets/medication_card.dart';
 import '../widgets/progress_ring.dart';
 import 'register_screen.dart';
 import 'edit_medicines_screen.dart';
+import 'fill_box_guide_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -155,6 +156,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (newMedicine != null) {
       setState(() => _medicines.add(newMedicine));
     }
+  }
+
+  Future<void> _goToFillGuide() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const FillBoxGuideScreen()),
+    );
   }
 
   Future<void> _goToEdit() async {
@@ -337,7 +345,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Image.asset('assets/medify-logo.png', height: 40),
+            child: Image.asset('assets/medify-logo.png', height: 56),
           ),
         ],
         leading: Builder(
@@ -350,6 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
       drawer: AppSidebar(
         onAddMedicine: _goToRegister,
         onEditMedicines: _goToEdit,
+        onFillBox: _goToFillGuide,
       ),
       body: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),

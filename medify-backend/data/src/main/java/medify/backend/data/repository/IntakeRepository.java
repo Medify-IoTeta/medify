@@ -36,4 +36,9 @@ public class IntakeRepository implements IntakeRepositoryPort {
     public List<Intake> findExpiredPendingIntakes(LocalDateTime now) {
         return jpaRepository.findExpiredPendingIntakes(now, List.of(IntakeStatus.PENDING, IntakeStatus.APPROVED));
     }
+
+    @Override
+    public long countTakenSince(Long userId, IntakeStatus status, LocalDateTime since) {
+        return jpaRepository.countTakenSince(userId, status, since);
+    }
 }
