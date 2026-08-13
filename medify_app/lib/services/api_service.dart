@@ -3,9 +3,31 @@ import 'package:http/http.dart' as http;
 import '../models/medicine.dart';
 import 'auth_service.dart';
 
+/// Carries the backend's actual error message (not just the HTTP status),
+/// so callers can show the real reason instead of guessing from a status code.
+class ApiException implements Exception {
+  final int statusCode;
+  final String message;
+  ApiException(this.statusCode, this.message);
+
+  @override
+  String toString() => message;
+}
+
+Never _throwApiException(http.Response response) {
+  String message = 'Request failed (${response.statusCode})';
+  try {
+    final body = jsonDecode(response.body);
+    if (body is Map && body['message'] is String) message = body['message'];
+  } catch (_) {
+    // non-JSON body — keep the generic message
+  }
+  throw ApiException(response.statusCode, message);
+}
+
 class ApiService {
-  static const String baseUrl = 'http://localhost:8080'; // for browser
-  //static const String baseUrl = 'http://192.168.7.14:8080'; // for android
+  static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
+  //static const String baseUrl = 'http://192.168.7.15:8080'; // for android over WiFi (if not using adb reverse)
   static const String embeddedBaseUrl = 'http://192.168.7.21'; // embedded url
 
   final AuthService _authService = AuthService();
@@ -63,8 +85,10 @@ class ApiService {
   Future<Map<String, dynamic>> registerBackendUser(
     String idToken,
     String role,
-    String username,
-  ) async {
+    String firstName,
+    String lastName, {
+    String? patientEmail,
+  }) async {
     final url = Uri.parse('$baseUrl/api/auth/register');
     final response = await http.post(
       url,
@@ -72,11 +96,13 @@ class ApiService {
       body: jsonEncode({
         'idToken': idToken,
         'role': role,
-        'username': username,
+        'firstName': firstName,
+        'lastName': lastName,
+        if (patientEmail != null) 'patientEmail': patientEmail,
       }),
     );
     if (response.statusCode == 200) return jsonDecode(response.body);
-    throw Exception('Failed to register: ${response.statusCode} ${response.body}');
+    _throwApiException(response);
   }
 
   Future<Map<String, dynamic>?> getCurrentBackendUser() async {

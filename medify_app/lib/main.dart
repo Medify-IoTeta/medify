@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'screens/auth_gate.dart';
 import 'theme/app_theme.dart';
+import 'utils/app_logger.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -16,7 +17,7 @@ void main() async {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (e) {
-    debugPrint('Firebase init skipped: $e');
+    AppLogger.error('Firebase init skipped', e, 'Main');
   }
   runApp(const MedifyApp());
 }

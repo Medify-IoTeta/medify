@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/medicine.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_logger.dart';
 import 'fill_box_wizard_screen.dart';
 
 const int totalBoxSlots = 13;
@@ -44,8 +45,8 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
       try {
         final state = await _apiService.getRefillState();
         if (mounted) setState(() => _refillState = state);
-      } catch (_) {
-        // silent — next poll retries
+      } catch (e) {
+        AppLogger.debug('Refill state poll failed, retrying: $e', 'FillBox');
       }
       return _polling && mounted;
     });

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/medicine.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_logger.dart';
 import '../widgets/app_sidebar.dart';
 import '../widgets/medication_card.dart';
 import '../widgets/progress_ring.dart';
@@ -39,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await _apiService.registerFcmToken(token);
       }
     } catch (e) {
-      debugPrint('FCM token registration failed: $e');
+      AppLogger.error('FCM token registration failed', e, 'Home');
     }
   }
 
@@ -65,7 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }));
       });
     } catch (e) {
-      debugPrint('Failed to load medicines: $e');
+      AppLogger.error('Failed to load medicines', e, 'Home');
     }
   }
 
@@ -192,7 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
           await _showReminderDialog(message, intakeId, timing);
         }
       } catch (e) {
-        debugPrint('Polling error: $e');
+        AppLogger.warning('Notification poll failed, retrying: $e', 'Home');
       }
 
       return _polling && mounted;
@@ -323,7 +324,7 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: dispensed ? Colors.green : Colors.orange,
       ));
     } catch (e) {
-      debugPrint('Intake error: $e');
+      AppLogger.error('Intake action failed', e, 'Home');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Error: $e'),

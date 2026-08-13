@@ -86,7 +86,7 @@ Base URLs:
 | `postponeIntake(id)` | PATCH /api/intakes/{id}/postpone |
 | `getNotificationsLog(userId, {from, to})` | GET /api/notifications-log?userId={id}[&from=&to=] |
 | `dispenseFromDevice()` | GET http://192.168.7.18/move — 15s timeout, handles JSON or plain-text "OK" |
-| `registerBackendUser(idToken, role, username)` | POST /api/auth/register — claims/creates the local `User` row for a Firebase account |
+| `registerBackendUser(idToken, role, firstName, lastName, {patientEmail})` | POST /api/auth/register — claims/creates the local `User` row for a Firebase account. `patientEmail` required for `role: 'CAREGIVER'` |
 | `getCurrentBackendUser()` | GET /api/auth/me — 404 → `null` (not registered yet) |
 | `registerFcmToken(token)` | PUT /api/users/me/fcm-token — identity comes from the auth header, no userId param |
 
@@ -102,7 +102,7 @@ Every method above (except `dispenseFromDevice`, which talks straight to the emb
 
 ## Auth
 
-Firebase Authentication (email/password). `AuthGate` (app root) listens to `authStateChanges`; signed out → `AuthScreen`; signed in but no local backend `User` yet → `CompleteRegistrationScreen` (role + name, calls `registerBackendUser`); signed in + registered → `HomeScreen` (type `PATIENT`) or `CaregiverScreen(userId: ...)` (type `CAREGIVER`), resolved from `GET /api/auth/me`. One patient per pillbox; any number of caregivers, all auto-linked to that patient on registration.
+Firebase Authentication (email/password). `AuthGate` (app root) listens to `authStateChanges`; signed out → `AuthScreen`; signed in but no local backend `User` yet → `CompleteRegistrationScreen` (role, first/last name, and — if role is Caregiver — the patient's email, calls `registerBackendUser`); signed in + registered → `HomeScreen` (type `PATIENT`) or `CaregiverScreen(userId: ...)` (type `CAREGIVER`), resolved from `GET /api/auth/me`. One patient per pillbox; a caregiver must enter that exact patient's email to register (backend verifies it exists — 404 if not, 409 if a second patient tries to register) and is then auto-linked via `caregiver_links`.
 
 ## Notes
 

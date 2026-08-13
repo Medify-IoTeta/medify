@@ -8,6 +8,7 @@ public interface UserRepositoryPort {
     User save(User user);
     Optional<User> findById(Long id);
     Optional<User> findByFirebaseUid(String firebaseUid);
+    Optional<User> findByEmail(String email);
     Optional<User> findFirstByType(UserType type);
     Optional<User> findFirstByTypeAndFirebaseUidIsNull(UserType type);
 }

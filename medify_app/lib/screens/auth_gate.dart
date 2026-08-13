@@ -25,7 +25,12 @@ class _AuthGateState extends State<AuthGate> {
   String? _lastUid;
 
   void _refreshMe() {
-    setState(() => _meFuture = _apiService.getCurrentBackendUser());
+    // Block body, not an arrow expression: `() => _meFuture = future()` would
+    // make the assignment's value (a Future) the closure's return value,
+    // which setState() rejects at runtime.
+    setState(() {
+      _meFuture = _apiService.getCurrentBackendUser();
+    });
   }
 
   @override

@@ -31,6 +31,11 @@ public class UserRepository implements UserRepositoryPort {
     }
 
     @Override
+    public Optional<User> findByEmail(String email) {
+        return jpaRepository.findByEmail(email);
+    }
+
+    @Override
     public Optional<User> findFirstByType(UserType type) {
         return jpaRepository.findFirstByType(type);
     }

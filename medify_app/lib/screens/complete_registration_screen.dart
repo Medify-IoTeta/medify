@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_logger.dart';
 
 class CompleteRegistrationScreen extends StatefulWidget {
   final VoidCallback onRegistered;
@@ -18,7 +19,9 @@ class _CompleteRegistrationScreenState
     extends State<CompleteRegistrationScreen> {
   final AuthService _authService = AuthService();
   final ApiService _apiService = ApiService();
-  final _usernameController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _patientEmailController = TextEditingController();
 
   String _role = 'PATIENT';
   bool _loading = false;
@@ -26,16 +29,26 @@ class _CompleteRegistrationScreenState
 
   @override
   void dispose() {
-    _usernameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _patientEmailController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    final username = _usernameController.text.trim();
-    if (username.isEmpty) {
-      setState(() => _error = 'Please enter your name.');
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+    final patientEmail = _patientEmailController.text.trim();
+
+    if (firstName.isEmpty || lastName.isEmpty) {
+      setState(() => _error = 'Please enter your first and last name.');
       return;
     }
+    if (_role == 'CAREGIVER' && patientEmail.isEmpty) {
+      setState(() => _error = "Please enter the patient's email.");
+      return;
+    }
+
     setState(() {
       _loading = true;
       _error = null;
@@ -43,9 +56,16 @@ class _CompleteRegistrationScreenState
     try {
       final idToken = await _authService.idToken();
       if (idToken == null) throw Exception('Not signed in');
-      await _apiService.registerBackendUser(idToken, _role, username);
+      await _apiService.registerBackendUser(
+        idToken,
+        _role,
+        firstName,
+        lastName,
+        patientEmail: _role == 'CAREGIVER' ? patientEmail : null,
+      );
       widget.onRegistered();
     } catch (e) {
+      AppLogger.error('Registration failed', e, 'Auth');
       if (!mounted) return;
       setState(() => _error = _friendlyMessage(e));
     } finally {
@@ -54,15 +74,17 @@ class _CompleteRegistrationScreenState
   }
 
   String _friendlyMessage(Object e) {
-    final s = '$e';
-    if (s.contains('409')) {
-      return 'A patient is already registered for this pillbox. Choose "Caregiver" instead.';
-    }
-    return 'Something went wrong. Please try again.';
+    // ApiException carries the backend's actual reason (e.g. "This account is
+    // already registered" vs "A patient is already registered for this
+    // pillbox" are both 409s but mean different things) — show it directly
+    // instead of guessing generic text from the status code alone.
+    if (e is ApiException) return e.message;
+    return 'Something went wrong. Please check your connection and try again.';
   }
 
   @override
   Widget build(BuildContext context) {
+    final isCaregiver = _role == 'CAREGIVER';
     return Scaffold(
       appBar: AppBar(
         title: const Text('Complete Your Profile'),
@@ -109,10 +131,34 @@ class _CompleteRegistrationScreenState
                         setState(() => _role = selection.first),
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  TextField(
-                    controller: _usernameController,
-                    decoration: const InputDecoration(labelText: 'Your name'),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _firstNameController,
+                          decoration: const InputDecoration(labelText: 'First name'),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: TextField(
+                          controller: _lastNameController,
+                          decoration: const InputDecoration(labelText: 'Last name'),
+                        ),
+                      ),
+                    ],
                   ),
+                  if (isCaregiver) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    TextField(
+                      controller: _patientEmailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: "Patient's email",
+                        helperText: "The email of the patient you're caring for",
+                      ),
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: AppSpacing.md),
                     Text(_error!, style: TextStyle(color: AppColors.error)),

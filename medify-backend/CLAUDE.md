@@ -55,7 +55,7 @@ Production times would be 08:00 / 13:00 / 20:00 — change cron expressions in `
 
 ## Auth
 
-Every `/api/**` request requires `Authorization: Bearer <Firebase ID token>` — enforced by `AuthInterceptor` (`api/auth/`), which verifies the token via `FirebaseAuth` and, if a local `User` row exists for that `firebase_uid`, attaches it to the request as `CurrentUserContext`. Controllers call `authService.resolvePatientId(currentUserContext.getUser())` instead of hardcoding an id: a patient resolves to their own id, a caregiver resolves to the patient they're linked to via `caregiver_links` (`AuthService.resolvePatientId`). One patient per deployment; any number of caregivers, auto-linked to the patient at registration time (`AuthService.register`). Scheduled/internal callers with no request context (`ReminderScheduler`, `NotificationAdapter`) resolve the patient via `UserRepositoryPort.findFirstByType(PATIENT)` instead.
+Every `/api/**` request requires `Authorization: Bearer <Firebase ID token>` — enforced by `AuthInterceptor` (`api/auth/`), which verifies the token via `FirebaseAuth` and, if a local `User` row exists for that `firebase_uid`, attaches it to the request as `CurrentUserContext`. Controllers call `authService.resolvePatientId(currentUserContext.getUser())` instead of hardcoding an id: a patient resolves to their own id, a caregiver resolves to the patient they're linked to via `caregiver_links` (`AuthService.resolvePatientId`). One patient per deployment; caregivers register by supplying that patient's email, verified server-side (`AuthService.register` looks it up via `UserRepositoryPort.findByEmail`, rejects with 404 if no matching registered patient), then auto-linked via `caregiver_links`. Scheduled/internal callers with no request context (`ReminderScheduler`, `NotificationAdapter`) resolve the patient via `UserRepositoryPort.findFirstByType(PATIENT)` instead.
 
 ## REST API
 
@@ -63,7 +63,7 @@ All endpoints under `/api/*` with `@CrossOrigin(origins = "*")`; all require the
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/register` | `{idToken, role, username}` → claims/creates the local `User` for this Firebase account |
+| POST | `/api/auth/register` | `{idToken, role, firstName, lastName, patientEmail?}` → claims/creates the local `User` for this Firebase account. `patientEmail` is required for `role=CAREGIVER` and must match an already-registered patient (404 if not found); a second claimed `role=PATIENT` signup is rejected (409) |
 | GET | `/api/auth/me` | Returns the resolved `User` for the current token, or 404 if not registered yet |
 | GET | `/api/notification` | Poll for pending notification |
 | POST | `/api/notification` | Send user response (confirm/snooze/skip) |

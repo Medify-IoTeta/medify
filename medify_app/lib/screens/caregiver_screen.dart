@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/medicine.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_logger.dart';
 import '../widgets/app_sidebar.dart';
 import 'fill_box_guide_screen.dart';
 
@@ -49,7 +50,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
         _loading = false;
       });
     } catch (e) {
-      debugPrint('CaregiverScreen load error: $e');
+      AppLogger.error('CaregiverScreen load failed', e, 'Caregiver');
       if (!mounted) return;
       setState(() => _loading = false);
     }

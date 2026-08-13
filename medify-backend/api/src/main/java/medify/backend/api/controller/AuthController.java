@@ -4,10 +4,8 @@ import medify.backend.api.auth.CurrentUserContext;
 import medify.backend.api.service.AuthService;
 import medify.backend.domain.model.User;
 import medify.backend.domain.model.UserType;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 
@@ -28,14 +26,10 @@ public class AuthController {
     public User register(@RequestBody Map<String, String> body) {
         String idToken = body.get("idToken");
         UserType role = UserType.valueOf(body.get("role").toUpperCase());
-        String username = body.get("username");
-        try {
-            return authService.register(idToken, role, username);
-        } catch (IllegalStateException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
-        } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, e.getMessage());
-        }
+        String firstName = body.get("firstName");
+        String lastName = body.get("lastName");
+        String patientEmail = body.get("patientEmail");
+        return authService.register(idToken, role, firstName, lastName, patientEmail);
     }
 
     @GetMapping("/me")
