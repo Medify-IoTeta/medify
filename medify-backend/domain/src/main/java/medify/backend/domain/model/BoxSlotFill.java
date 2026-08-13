@@ -22,6 +22,9 @@ public class BoxSlotFill {
     @Column(name = "slot_number", nullable = false)
     private int slotNumber;
 
+    @Column(name = "medicine_id", nullable = false)
+    private Long medicineId;
+
     @Column(name = "filled_at", nullable = false)
     private LocalDateTime filledAt;
 }

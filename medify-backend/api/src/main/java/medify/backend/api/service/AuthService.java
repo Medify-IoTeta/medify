@@ -1,0 +1,84 @@
+package medify.backend.api.service;
+
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
+import com.google.firebase.auth.FirebaseToken;
+import medify.backend.domain.model.CaregiverLink;
+import medify.backend.domain.model.CaregiverLinkId;
+import medify.backend.domain.model.User;
+import medify.backend.domain.model.UserType;
+import medify.backend.domain.port.CaregiverLinkRepositoryPort;
+import medify.backend.domain.port.UserRepositoryPort;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AuthService {
+
+    private final FirebaseAuth firebaseAuth;
+    private final UserRepositoryPort userRepository;
+    private final CaregiverLinkRepositoryPort caregiverLinkRepository;
+
+    public AuthService(FirebaseAuth firebaseAuth,
+                        UserRepositoryPort userRepository,
+                        CaregiverLinkRepositoryPort caregiverLinkRepository) {
+        this.firebaseAuth = firebaseAuth;
+        this.userRepository = userRepository;
+        this.caregiverLinkRepository = caregiverLinkRepository;
+    }
+
+    public FirebaseToken verifyToken(String idToken) {
+        try {
+            return firebaseAuth.verifyIdToken(idToken);
+        } catch (FirebaseAuthException e) {
+            throw new IllegalArgumentException("Invalid Firebase ID token", e);
+        }
+    }
+
+    public User register(String idToken, UserType role, String username) {
+        FirebaseToken token = verifyToken(idToken);
+        String uid = token.getUid();
+
+        if (userRepository.findByFirebaseUid(uid).isPresent()) {
+            throw new IllegalStateException("This account is already registered");
+        }
+
+        User user;
+        if (role == UserType.PATIENT) {
+            var existingPatient = userRepository.findFirstByType(UserType.PATIENT);
+            if (existingPatient.isPresent() && existingPatient.get().getFirebaseUid() != null) {
+                throw new IllegalStateException("A patient is already registered for this pillbox");
+            }
+            user = existingPatient.orElseGet(User::new);
+        } else {
+            user = userRepository.findFirstByTypeAndFirebaseUidIsNull(UserType.CAREGIVER)
+                    .orElseGet(User::new);
+        }
+
+        user.setFirebaseUid(uid);
+        user.setEmail(token.getEmail());
+        user.setUsername(username);
+        user.setType(role);
+        User saved = userRepository.save(user);
+
+        if (role == UserType.CAREGIVER) {
+            userRepository.findFirstByType(UserType.PATIENT).ifPresent(patient -> {
+                CaregiverLinkId linkId = new CaregiverLinkId(patient.getId(), saved.getId());
+                if (caregiverLinkRepository.findById(linkId).isEmpty()) {
+                    caregiverLinkRepository.save(new CaregiverLink(linkId, true));
+                }
+            });
+        }
+
+        return saved;
+    }
+
+    public Long resolvePatientId(User currentUser) {
+        if (currentUser.getType() == UserType.PATIENT) {
+            return currentUser.getId();
+        }
+        return caregiverLinkRepository.findByCaregiverId(currentUser.getId()).stream()
+                .findFirst()
+                .map(link -> link.getId().getPatientId())
+                .orElseThrow(() -> new IllegalStateException("Caregiver is not linked to a patient"));
+    }
+}

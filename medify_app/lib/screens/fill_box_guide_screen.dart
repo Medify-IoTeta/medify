@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import '../models/medicine.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import 'fill_box_wizard_screen.dart';
 
-const int _totalSlots = 13;
+const int totalBoxSlots = 13;
 
 class FillBoxGuideScreen extends StatefulWidget {
   const FillBoxGuideScreen({super.key});
@@ -17,6 +18,7 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
   final ApiService _apiService = ApiService();
 
   bool _loading = true;
+  bool _polling = true;
   Map<String, dynamic>? _refillState;
   List<Medicine> _medicines = [];
 
@@ -24,6 +26,29 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
   void initState() {
     super.initState();
     _load();
+    _startPolling();
+  }
+
+  @override
+  void dispose() {
+    _polling = false;
+    super.dispose();
+  }
+
+  // Refreshes refill state every few seconds so a fill made from the other
+  // role's session (patient vs. caregiver) shows up here without a manual pull.
+  void _startPolling() {
+    Future.doWhile(() async {
+      await Future.delayed(const Duration(seconds: 3));
+      if (!_polling || !mounted) return false;
+      try {
+        final state = await _apiService.getRefillState();
+        if (mounted) setState(() => _refillState = state);
+      } catch (_) {
+        // silent — next poll retries
+      }
+      return _polling && mounted;
+    });
   }
 
   Future<void> _load() async {
@@ -76,22 +101,24 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
     }
   }
 
-  Future<void> _toggleFill(int slotIndex) async {
-    final filled = List<int>.from(_filledSlots);
-    try {
-      if (filled.contains(slotIndex)) {
-        await _apiService.unmarkSlotFilled(slotIndex);
-        filled.remove(slotIndex);
-      } else {
-        await _apiService.markSlotFilled(slotIndex);
-        filled.add(slotIndex);
-      }
-      setState(() {
-        _refillState = Map.of(_refillState!)..['filledSlots'] = filled;
-      });
-    } catch (e) {
-      _showError('$e');
+  Future<void> _openWizard(Medicine medicine) async {
+    final cells = _cellsForMedicine(medicine);
+    if (cells.isEmpty) {
+      _showError('No cells scheduled for this medicine.');
+      return;
     }
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FillBoxWizardScreen(
+          medicine: medicine,
+          cellNumbers: cells,
+          currentSlot: _currentSlot,
+          isFilled: (slot) => _isFilled(slot, medicine.id),
+        ),
+      ),
+    );
+    _load();
   }
 
   void _showError(String msg) {
@@ -118,22 +145,45 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
         .toList();
   }
 
-  List<Medicine> _medsForTiming(String timing) => _scheduledMedicines
-      .where((m) => m.timePeriod.name.toUpperCase() == timing)
-      .toList();
-
   int get _currentSlot =>
       (_refillState?['currentSlot'] as num?)?.toInt() ?? 0;
 
-  List<int> get _filledSlots =>
-      ((_refillState?['filledSlots'] as List?)?.cast<int>()) ?? [];
+  List<Map<String, dynamic>> get _filledCells =>
+      ((_refillState?['filledCells'] as List?)?.cast<Map<String, dynamic>>()) ??
+      [];
 
-  // Circular order: currentSlot … 12, then 0 … currentSlot-1
-  List<int> get _slotDisplayOrder {
-    final List<int> order = [];
-    for (int i = _currentSlot; i < _totalSlots; i++) order.add(i);
-    for (int i = 0; i < _currentSlot; i++) order.add(i);
-    return order;
+  bool _isFilled(int slot, String medicineId) => _filledCells.any((c) =>
+      (c['slotNumber'] as num).toInt() == slot &&
+      c['medicineId'].toString() == medicineId);
+
+  int _filledCountFor(String medicineId) => _filledCells
+      .where((c) => c['medicineId'].toString() == medicineId)
+      .length;
+
+  // Cell indices (0-based) belonging to this medicine's timing window,
+  // ordered starting from the box's current position.
+  List<int> _cellsForMedicine(Medicine m) {
+    final timings = _activeTimings;
+    final myTiming = m.timePeriod.name.toUpperCase();
+    if (timings.isEmpty || !timings.contains(myTiming)) return [];
+    final allCells = List.generate(totalBoxSlots, (i) => i)
+        .where((i) => timings[i % timings.length] == myTiming)
+        .toList();
+    final splitAt = allCells.indexWhere((i) => i >= _currentSlot);
+    if (splitAt <= 0) return allCells;
+    return [...allCells.sublist(splitAt), ...allCells.sublist(0, splitAt)];
+  }
+
+  List<Medicine> get _sortedScheduledMedicines {
+    final timings = _activeTimings;
+    final meds = List<Medicine>.from(_scheduledMedicines);
+    meds.sort((a, b) {
+      final ai = timings.indexOf(a.timePeriod.name.toUpperCase());
+      final bi = timings.indexOf(b.timePeriod.name.toUpperCase());
+      if (ai != bi) return ai.compareTo(bi);
+      return a.name.compareTo(b.name);
+    });
+    return meds;
   }
 
   String _timingLabel(String t) {
@@ -181,7 +231,7 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
           ),
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Image.asset('assets/medify-logo.png', height: 56),
+            child: Image.asset('assets/medify-logo.png', height: 80),
           ),
         ],
       ),
@@ -192,40 +242,47 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
   }
 
   Widget _buildBody() {
-    final timings = _activeTimings;
-
     if (_refillState == null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.inventory_2_outlined,
-                size: 64, color: AppColors.textSecondary),
-            const SizedBox(height: AppSpacing.md),
-            Text('No active refill session.',
-                style: AppTextStyles.body
-                    .copyWith(color: AppColors.textSecondary)),
-            const SizedBox(height: AppSpacing.xl),
-            ElevatedButton.icon(
-              onPressed: _startNewRefill,
-              icon: const Icon(Icons.add_circle_outline, size: 18),
-              label: const Text('Start First Refill'),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xxl),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.inventory_2_outlined,
+                  size: 72, color: AppColors.textSecondary),
+              const SizedBox(height: AppSpacing.lg),
+              Text('No active refill session.',
+                  style: AppTextStyles.h3
+                      .copyWith(color: AppColors.textSecondary),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: AppSpacing.xl),
+              _BigButton(
+                label: 'Start First Refill',
+                icon: Icons.add_circle_outline,
+                onPressed: _startNewRefill,
+              ),
+            ],
+          ),
         ),
       );
     }
 
-    if (timings.isEmpty) {
+    final medicines = _sortedScheduledMedicines;
+
+    if (medicines.isEmpty) {
       return Center(
         child: Text('No active medicines registered.',
-            style: AppTextStyles.body
-                .copyWith(color: AppColors.textSecondary)),
+            style: AppTextStyles.h3
+                .copyWith(color: AppColors.textSecondary),
+            textAlign: TextAlign.center),
       );
     }
 
-    final displayOrder = _slotDisplayOrder;
-    final filledCount = _filledSlots.length;
+    final totalCells =
+        medicines.fold<int>(0, (sum, m) => sum + _cellsForMedicine(m).length);
+    final filledCells = medicines.fold<int>(
+        0, (sum, m) => sum + _filledCountFor(m.id));
 
     return Column(
       children: [
@@ -234,106 +291,84 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
           width: double.infinity,
           color: AppColors.muted,
           padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.lg, vertical: AppSpacing.sm),
+              horizontal: AppSpacing.lg, vertical: AppSpacing.md),
           child: Row(
             children: [
-              Text('$filledCount / $_totalSlots slots filled',
-                  style: AppTextStyles.body),
+              Text('$filledCells / $totalCells cells filled',
+                  style: AppTextStyles.bodyLg),
               const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: ClipRRect(
                   borderRadius: AppRadius.smBorder,
                   child: LinearProgressIndicator(
-                    value: filledCount / _totalSlots,
-                    minHeight: 6,
+                    value: totalCells == 0 ? 0 : filledCells / totalCells,
+                    minHeight: 8,
                     backgroundColor: AppColors.border,
                     valueColor:
                         const AlwaysStoppedAnimation<Color>(AppColors.success),
                   ),
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
-              Text('${(filledCount / _totalSlots * 100).round()}%',
-                  style: AppTextStyles.bodySm),
             ],
           ),
         ),
 
-        // ── Slot list ─────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg, AppSpacing.md, AppSpacing.lg, 0),
+          child: Text(
+            'Choose a medicine to see where it goes',
+            style: AppTextStyles.body
+                .copyWith(color: AppColors.textSecondary),
+          ),
+        ),
+
+        // ── Medicine list ─────────────────────────────────────
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(AppSpacing.lg),
-            itemCount: displayOrder.length + 1, // +1 for reset button at bottom
-            itemBuilder: (_, listIndex) {
-              // Last item: reset button
-              if (listIndex == displayOrder.length) {
+            itemCount: medicines.length + 1, // +1 for reset button
+            itemBuilder: (_, index) {
+              if (index == medicines.length) {
                 return Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.xl),
-                  child: Center(
-                    child: TextButton.icon(
+                  padding: const EdgeInsets.only(top: AppSpacing.lg),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
                       onPressed: _startNewRefill,
-                      icon: const Icon(Icons.restart_alt,
-                          size: 16, color: AppColors.textSecondary),
-                      label: const Text('Reset box (start from slot 1)'),
-                      style: TextButton.styleFrom(
+                      icon: const Icon(Icons.restart_alt, size: 20),
+                      label: const Text('Reset Box (Start From Slot 1)'),
+                      style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.textSecondary,
-                        textStyle: AppTextStyles.bodySm,
+                        side: const BorderSide(color: AppColors.border),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 18),
+                        textStyle: AppTextStyles.bodyLg,
                       ),
                     ),
                   ),
                 );
               }
 
-              final slotIndex = displayOrder[listIndex];
-              final timing = timings[slotIndex % timings.length];
-              final day = (slotIndex ~/ timings.length) + 1;
-              final meds = _medsForTiming(timing);
-              final isCurrent = slotIndex == _currentSlot;
-              final isNextCycle = slotIndex < _currentSlot;
-              final isFilled = _filledSlots.contains(slotIndex);
+              final medicine = medicines[index];
+              final timing = medicine.timePeriod.name.toUpperCase();
+              final total = _cellsForMedicine(medicine).length;
+              final filled = _filledCountFor(medicine.id);
+              final complete = total > 0 && filled >= total;
 
-              // Insert divider before "next cycle" slots begin
-              final prevIndex = listIndex > 0 ? displayOrder[listIndex - 1] : -1;
-              final showDivider = isNextCycle && (prevIndex >= _currentSlot);
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (listIndex > 0)
-                    const SizedBox(height: AppSpacing.sm),
-                  if (showDivider) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    Row(
-                      children: [
-                        const Expanded(child: Divider()),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.sm),
-                          child: Text(
-                            'Already dispensed — refill for next cycle',
-                            style: AppTextStyles.caption,
-                          ),
-                        ),
-                        const Expanded(child: Divider()),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                  ],
-                  _SlotCard(
-                    slotIndex: slotIndex,
-                    timing: timing,
-                    day: day,
-                    medicines: meds,
-                    isCurrent: isCurrent,
-                    isNextCycle: isNextCycle,
-                    isFilled: isFilled,
-                    timingLabel: _timingLabel(timing),
-                    timingIcon: _timingIcon(timing),
-                    timingColor: _timingColor(timing),
-                    formatAmount: _formatAmount,
-                    onToggleFill: () => _toggleFill(slotIndex),
-                  ),
-                ],
+              return Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                child: _MedicineRow(
+                  medicine: medicine,
+                  timingLabel: _timingLabel(timing),
+                  timingIcon: _timingIcon(timing),
+                  timingColor: _timingColor(timing),
+                  formatAmount: _formatAmount,
+                  filledCount: filled,
+                  totalCount: total,
+                  complete: complete,
+                  onTap: () => _openWizard(medicine),
+                ),
               );
             },
           ),
@@ -343,156 +378,141 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
   }
 }
 
-// ── Slot card ─────────────────────────────────────────────────
+// ── Medicine row ─────────────────────────────────────────────
 
-class _SlotCard extends StatelessWidget {
-  final int slotIndex;
-  final String timing;
-  final int day;
-  final List<Medicine> medicines;
-  final bool isCurrent;
-  final bool isNextCycle;
-  final bool isFilled;
+class _MedicineRow extends StatelessWidget {
+  final Medicine medicine;
   final String timingLabel;
   final IconData timingIcon;
   final Color timingColor;
   final String Function(double) formatAmount;
-  final VoidCallback onToggleFill;
+  final int filledCount;
+  final int totalCount;
+  final bool complete;
+  final VoidCallback onTap;
 
-  const _SlotCard({
-    required this.slotIndex,
-    required this.timing,
-    required this.day,
-    required this.medicines,
-    required this.isCurrent,
-    required this.isNextCycle,
-    required this.isFilled,
+  const _MedicineRow({
+    required this.medicine,
     required this.timingLabel,
     required this.timingIcon,
     required this.timingColor,
     required this.formatAmount,
-    required this.onToggleFill,
+    required this.filledCount,
+    required this.totalCount,
+    required this.complete,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
+    final badgeColor = complete ? AppColors.success : AppColors.warning;
+
+    return Material(
+      color: AppColors.surface,
+      borderRadius: AppRadius.lgBorder,
+      child: InkWell(
         borderRadius: AppRadius.lgBorder,
-        border: Border.all(
-          color: isCurrent ? AppColors.primary : AppColors.border,
-          width: isCurrent ? 2 : 1,
-        ),
-      ),
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Slot number ──────────────────────────────────
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: isNextCycle ? AppColors.muted : AppColors.primary,
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              '${slotIndex + 1}',
-              style: TextStyle(
-                color: isNextCycle ? AppColors.textSecondary : Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 14,
-              ),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 76),
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.lgBorder,
+            border: Border.all(
+              color: complete ? AppColors.success : AppColors.border,
+              width: complete ? 2 : 1,
             ),
           ),
-
-          const SizedBox(width: AppSpacing.md),
-
-          // ── Timing + medicines ───────────────────────────
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: timingColor.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Icon(timingIcon, size: 26, color: timingColor),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(timingIcon, size: 15, color: timingColor),
-                    const SizedBox(width: 4),
                     Text(
-                      '$timingLabel  ·  Day $day',
-                      style: AppTextStyles.bodyLg,
+                      medicine.name,
+                      style: AppTextStyles.h3,
                     ),
-                    if (isCurrent) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryLight,
-                          borderRadius: AppRadius.smBorder,
-                        ),
-                        child: Text(
-                          'NEXT',
-                          style: AppTextStyles.caption.copyWith(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                    ],
+                    const SizedBox(height: 2),
+                    Text(
+                      '$timingLabel  ·  ${formatAmount(medicine.dosageAmount)} ${medicine.dosageUnit.name}',
+                      style: AppTextStyles.bodyLg
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
                   ],
                 ),
-                const SizedBox(height: AppSpacing.xs),
-                ...medicines.map((m) => Padding(
-                      padding: const EdgeInsets.only(top: 2, left: 2),
-                      child: Text(
-                        '• ${m.name}  –  ${formatAmount(m.dosageAmount)} ${m.dosageUnit.name}',
-                        style: AppTextStyles.bodySm,
-                      ),
-                    )),
-              ],
-            ),
-          ),
-
-          // ── Fill toggle ──────────────────────────────────
-          GestureDetector(
-            onTap: onToggleFill,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
-              decoration: BoxDecoration(
-                color: isFilled
-                    ? AppColors.success.withValues(alpha: 0.12)
-                    : AppColors.warning.withValues(alpha: 0.12),
-                borderRadius: AppRadius.smBorder,
-                border: Border.all(
-                  color: isFilled ? AppColors.success : AppColors.warning,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.12),
+                  borderRadius: AppRadius.smBorder,
+                  border: Border.all(color: badgeColor),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      complete
+                          ? Icons.check_circle_outline
+                          : Icons.pending_outlined,
+                      size: 16,
+                      color: badgeColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$filledCount / $totalCount',
+                      style: AppTextStyles.label.copyWith(color: badgeColor),
+                    ),
+                  ],
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isFilled
-                        ? Icons.check_circle_outline
-                        : Icons.add_circle_outline,
-                    size: 14,
-                    color: isFilled ? AppColors.success : AppColors.warning,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    isFilled ? 'Filled' : 'Fill',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isFilled ? AppColors.success : AppColors.warning,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+              const SizedBox(width: AppSpacing.xs),
+              const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+            ],
           ),
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BigButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  const _BigButton({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 22),
+        label: Text(label),
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          textStyle: AppTextStyles.bodyLg.copyWith(fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }

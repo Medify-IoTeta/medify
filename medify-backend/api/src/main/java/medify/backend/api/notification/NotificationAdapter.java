@@ -7,6 +7,7 @@ import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.Notification;
 import medify.backend.domain.model.NotificationLog;
 import medify.backend.domain.model.NotificationType;
+import medify.backend.domain.model.UserType;
 import medify.backend.domain.port.NotificationLogRepositoryPort;
 import medify.backend.domain.port.NotificationPort;
 import medify.backend.domain.port.UserRepositoryPort;
@@ -41,12 +42,12 @@ public class NotificationAdapter implements NotificationPort {
         pending = new PendingNotification(message, intakeId, timing);
         logger.info("Notification queued: {} (intakeId={}, timing={})", message, intakeId, timing);
 
-        NotificationLog log = new NotificationLog(null, 1L, intakeId, NotificationType.WINDOW_REMINDER, message, LocalDateTime.now(), "SENT");
-        notificationLogRepository.save(log);
+        userRepository.findFirstByType(UserType.PATIENT).ifPresent(patient -> {
+            NotificationLog log = new NotificationLog(null, patient.getId(), intakeId, NotificationType.WINDOW_REMINDER, message, LocalDateTime.now(), "SENT");
+            notificationLogRepository.save(log);
 
-        userRepository.findById(1L).ifPresent(user -> {
-            if (user.getFcmToken() != null) {
-                sendPushNotification(user.getFcmToken(), message, intakeId, timing);
+            if (patient.getFcmToken() != null) {
+                sendPushNotification(patient.getFcmToken(), message, intakeId, timing);
             }
         });
     }

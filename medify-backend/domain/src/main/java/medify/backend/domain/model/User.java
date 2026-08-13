@@ -24,13 +24,13 @@ public class User {
 
     private String phone;
 
-    @Column(name = "password_hash")
-    private String passwordHash;
-
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserType type;
 
     @Column(name = "fcm_token")
     private String fcmToken;
+
+    @Column(name = "firebase_uid", unique = true)
+    private String firebaseUid;
 }

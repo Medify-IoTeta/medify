@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import '../models/medicine.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
-
-const int _caregiverUserId = 2;
+import '../widgets/app_sidebar.dart';
+import 'fill_box_guide_screen.dart';
 
 class CaregiverScreen extends StatefulWidget {
-  const CaregiverScreen({super.key});
+  final int userId;
+
+  const CaregiverScreen({super.key, required this.userId});
 
   @override
   State<CaregiverScreen> createState() => _CaregiverScreenState();
@@ -32,7 +34,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
       final results = await Future.wait([
         _apiService.getTodayIntakes(),
         _apiService.getMedicines(),
-        _apiService.getNotificationsLog(_caregiverUserId),
+        _apiService.getNotificationsLog(widget.userId),
       ]);
 
       if (!mounted) return;
@@ -66,6 +68,13 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
       .where((m) => m.timePeriod.name.toUpperCase() == timing.toUpperCase() && _isScheduled(m))
       .toList();
 
+  Future<void> _goToFillGuide() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const FillBoxGuideScreen()),
+    );
+  }
+
   // ── Build ─────────────────────────────────────────────────────
 
   @override
@@ -73,6 +82,12 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Caregiver View'),
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -87,6 +102,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
           ),
         ],
       ),
+      drawer: AppSidebar(onFillBox: _goToFillGuide),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
@@ -331,8 +347,8 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           leading: Container(
-            width: 40,
-            height: 40,
+            width: 60,
+            height: 80,
             decoration: BoxDecoration(
               color: _timingColor(timing).withValues(alpha: 0.12),
               borderRadius: AppRadius.mdBorder,

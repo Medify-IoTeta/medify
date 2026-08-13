@@ -36,7 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await FirebaseMessaging.instance.requestPermission();
       final token = await FirebaseMessaging.instance.getToken();
       if (token != null) {
-        await _apiService.registerFcmToken(1, token);
+        await _apiService.registerFcmToken(token);
       }
     } catch (e) {
       debugPrint('FCM token registration failed: $e');
@@ -345,7 +345,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Image.asset('assets/medify-logo.png', height: 56),
+            child: Image.asset('assets/medify-logo.png', height: 80),
           ),
         ],
         leading: Builder(

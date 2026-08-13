@@ -1,5 +1,7 @@
 package medify.backend.api.controller;
 
+import medify.backend.api.auth.CurrentUserContext;
+import medify.backend.api.service.AuthService;
 import medify.backend.api.service.IntakeService;
 import medify.backend.domain.model.Intake;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -14,14 +16,18 @@ import java.util.Map;
 public class IntakeController {
 
     private final IntakeService intakeService;
+    private final AuthService authService;
+    private final CurrentUserContext currentUserContext;
 
-    public IntakeController(IntakeService intakeService) {
+    public IntakeController(IntakeService intakeService, AuthService authService, CurrentUserContext currentUserContext) {
         this.intakeService = intakeService;
+        this.authService = authService;
+        this.currentUserContext = currentUserContext;
     }
 
     @GetMapping("/today")
     public List<Intake> getToday() {
-        return intakeService.getToday(1L);
+        return intakeService.getToday(authService.resolvePatientId(currentUserContext.getUser()));
     }
 
     @GetMapping("/{id}")
@@ -33,7 +39,7 @@ public class IntakeController {
     public List<Intake> getByDateRange(
             @RequestParam("from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam("to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
-        return intakeService.getByDateRange(1L, from, to);
+        return intakeService.getByDateRange(authService.resolvePatientId(currentUserContext.getUser()), from, to);
     }
 
     @PatchMapping("/{id}/approve")

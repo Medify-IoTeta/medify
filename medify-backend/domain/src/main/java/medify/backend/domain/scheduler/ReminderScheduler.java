@@ -4,9 +4,11 @@ import medify.backend.domain.model.Intake;
 import medify.backend.domain.model.IntakeStatus;
 import medify.backend.domain.model.Medicine;
 import medify.backend.domain.model.Timing;
+import medify.backend.domain.model.UserType;
 import medify.backend.domain.port.IntakeRepositoryPort;
 import medify.backend.domain.port.MedicineRepositoryPort;
 import medify.backend.domain.port.NotificationPort;
+import medify.backend.domain.port.UserRepositoryPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -22,26 +24,29 @@ public class ReminderScheduler {
     private final MedicineRepositoryPort medicineRepository;
     private final IntakeRepositoryPort intakeRepository;
     private final NotificationPort notificationPort;
+    private final UserRepositoryPort userRepository;
 
     public ReminderScheduler(MedicineRepositoryPort medicineRepository,
                              IntakeRepositoryPort intakeRepository,
-                             NotificationPort notificationPort) {
+                             NotificationPort notificationPort,
+                             UserRepositoryPort userRepository) {
         this.medicineRepository = medicineRepository;
         this.intakeRepository = intakeRepository;
         this.notificationPort = notificationPort;
+        this.userRepository = userRepository;
     }
 
-    @Scheduled(cron = "0 0 08 * * *")
+    @Scheduled(cron = "0 49 19 * * *")
     public void sendMorningReminder() {
         sendReminder(Timing.MORNING);
     }
 
-    @Scheduled(cron = "0 00 14 * * *")
+    @Scheduled(cron = "0 46 19 * * *")
     public void sendNoonReminder() {
         sendReminder(Timing.NOON);
     }
 
-    @Scheduled(cron = "0 30 20 * * *")
+    @Scheduled(cron = "0 48 19 * * *")
     public void sendEveningReminder() {
         sendReminder(Timing.EVENING);
     }
@@ -53,6 +58,14 @@ public class ReminderScheduler {
             return;
         }
 
+        Long patientId = userRepository.findFirstByType(UserType.PATIENT)
+                .map(user -> user.getId())
+                .orElse(null);
+        if (patientId == null) {
+            logger.warn("No registered patient — skipping {} reminder", timing);
+            return;
+        }
+
         String names = medicines.stream()
                 .map(Medicine::getName)
                 .reduce((a, b) -> a + ", " + b)
@@ -60,7 +73,7 @@ public class ReminderScheduler {
 
         LocalDateTime now = LocalDateTime.now();
         Intake intake = new Intake();
-        intake.setUserId(1L);
+        intake.setUserId(patientId);
         intake.setTiming(timing);
         intake.setWindowStartTime(now);
         intake.setWindowEndTime(now.plusHours(1));

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../screens/caregiver_screen.dart';
+import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 
 class AppSidebar extends StatelessWidget {
@@ -51,40 +51,40 @@ class AppSidebar extends StatelessWidget {
                 label: 'Home',
                 onTap: () => Navigator.pop(context),
               ),
-              _SidebarItem(
-                icon: Icons.add_circle_outline,
-                label: 'Add Medicine',
-                onTap: () {
-                  Navigator.pop(context);
-                  onAddMedicine?.call();
-                },
-              ),
-              _SidebarItem(
-                icon: Icons.edit_outlined,
-                label: 'Edit Medicines',
-                onTap: () {
-                  Navigator.pop(context);
-                  onEditMedicines?.call();
-                },
-              ),
-              _SidebarItem(
-                icon: Icons.inventory_2_outlined,
-                label: 'Fill Pill Box',
-                onTap: () {
-                  Navigator.pop(context);
-                  onFillBox?.call();
-                },
-              ),
+              if (onAddMedicine != null)
+                _SidebarItem(
+                  icon: Icons.add_circle_outline,
+                  label: 'Add Medicine',
+                  onTap: () {
+                    Navigator.pop(context);
+                    onAddMedicine?.call();
+                  },
+                ),
+              if (onEditMedicines != null)
+                _SidebarItem(
+                  icon: Icons.edit_outlined,
+                  label: 'Edit Medicines',
+                  onTap: () {
+                    Navigator.pop(context);
+                    onEditMedicines?.call();
+                  },
+                ),
+              if (onFillBox != null)
+                _SidebarItem(
+                  icon: Icons.inventory_2_outlined,
+                  label: 'Fill Pill Box',
+                  onTap: () {
+                    Navigator.pop(context);
+                    onFillBox?.call();
+                  },
+                ),
               const Divider(height: AppSpacing.xl),
               _SidebarItem(
-                icon: Icons.supervisor_account_outlined,
-                label: 'Caregiver View',
+                icon: Icons.logout,
+                label: 'Log Out',
                 onTap: () {
                   Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const CaregiverScreen()),
-                  );
+                  AuthService().signOut();
                 },
               ),
             ],
