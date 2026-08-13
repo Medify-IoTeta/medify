@@ -1,0 +1,17 @@
+**/target/
+**/.idea/
+**/.git/
+**/.claude/
+**/.vscode/
+*.iml
+*.log
+
+.env
+.env.*
+!.env.example
+
+secrets/
+
+README.md
+CLAUDE.md
+docker-compose.yml

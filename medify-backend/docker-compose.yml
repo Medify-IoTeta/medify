@@ -1,17 +1,42 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15
     container_name: medify-db
     environment:
-      POSTGRES_DB: medify
-      POSTGRES_USER: medify_user
-      POSTGRES_PASSWORD: medify_pass
+      POSTGRES_DB: ${DB_NAME:-medify}
+      POSTGRES_USER: ${DB_USERNAME:-medify_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-medify_pass}
     ports:
       - "5432:5432"
     volumes:
       - medify_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-medify_user} -d ${DB_NAME:-medify}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: medify-backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-medify}
+      DB_USERNAME: ${DB_USERNAME:-medify_user}
+      DB_PASSWORD: ${DB_PASSWORD:-medify_pass}
+      SERVER_PORT: 8080
+      FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
+      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-/run/secrets/firebase-service-account.json}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ${FIREBASE_CREDENTIALS_HOST_PATH:-./secrets/firebase-service-account.json}:/run/secrets/firebase-service-account.json:ro
 
 volumes:
   medify_data:

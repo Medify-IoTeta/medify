@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(docker compose *)",
+      "Bash(docker image *)",
+      "Bash(docker system *)"
     ]
   }
 }
