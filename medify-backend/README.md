@@ -33,17 +33,32 @@ app → api → domain
 
 ### Prerequisites
 
-- Java 21
-- Maven
-- Docker
+- Docker (recommended — runs Postgres + backend together)
+- Java 21 and Maven (only needed if running the backend outside Docker)
 
-### Run
+### Run everything with Docker (recommended)
 
 ```bash
-# Start the database
-docker-compose up -d
+# Place your Firebase service-account key at medify-backend/secrets/firebase-service-account.json
+# (git-ignored — ask a teammate or generate one in the Firebase console)
 
-# Build and run
+docker compose up --build
+```
+
+This starts Postgres and the backend together, wires the backend to Postgres via the
+`postgres` service hostname, persists Postgres data in the `medify_data` volume, and
+exposes the backend on `http://localhost:8080`. Config is driven by environment
+variables — see `.env.example`. Health check: `GET /actuator/health`.
+
+### Run the backend outside Docker
+
+```bash
+# Start only the database
+docker compose up -d postgres
+
+# Point the app at it and run
+export DB_HOST=localhost
+export FIREBASE_CREDENTIALS_PATH=./secrets/firebase-service-account.json
 mvn spring-boot:run -pl app
 ```
 
@@ -77,9 +92,10 @@ The server starts on `http://localhost:8080`.
 
 ## Database
 
-PostgreSQL 15 via Docker.
+PostgreSQL 15 via Docker. Defaults below apply when no `.env` is provided; override any
+of them with `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD`.
 
-| Setting | Value |
+| Setting | Default |
 |---------|-------|
 | Database | `medify` |
 | User | `medify_user` |
