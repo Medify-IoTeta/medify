@@ -47,9 +47,9 @@ public class IntakeController {
         return intakeService.approve(id);
     }
 
-    @PatchMapping("/{id}/released")
-    public Intake released(@PathVariable("id") Long id) {
-        return intakeService.released(id);
+    @PostMapping("/{id}/dispense")
+    public Intake dispense(@PathVariable("id") Long id) {
+        return intakeService.dispense(id);
     }
 
     @PatchMapping("/{id}/skip")
