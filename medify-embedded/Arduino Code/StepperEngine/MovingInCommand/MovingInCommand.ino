@@ -55,7 +55,7 @@ char pass[] = "0523774443";
 // localhost value doesn't apply here since the box isn't USB-tethered.
 // This is a LAN IP, not a public host, and it drifts with the dev network —
 // keep it in sync manually until there's a stable, publicly reachable host.
-const char* BACKEND_HOST = "192.168.7.15";
+const char* BACKEND_HOST = "192.168.7.23";
 const uint16_t BACKEND_PORT = 8080;
 const char* DEVICE_ID = "pillbox-01";
 const char* DEVICE_TOKEN = "medify-dev-secret-001";
@@ -70,10 +70,23 @@ const unsigned long HEARTBEAT_INTERVAL_MS = 20000;
 // After a dispense, loop() polls the IR sensor until it confirms the
 // compartment emptied — there is no timeout here on purpose: the intake
 // just stays DISPENSED on the backend until this fires, however long it takes.
+//
+// Time-based, using millis() — not a loop-iteration counter, since loop()
+// iterations aren't a fixed/meaningful unit of time:
+//   moveOneSlot() done -> ignore the sensor for IR_SETTLE_MS (pill hasn't
+//   necessarily landed yet) -> then require IR_CONFIRM_DURATION_MS of
+//   *continuous* HIGH (empty) before confirming. Any LOW read during that
+//   window resets the continuous-empty timer back to zero.
 bool watchingIntake = false;
 long watchingIntakeId = -1;
-int irEmptyStreak = 0;
-const int IR_CONFIRM_STREAK = 5; // consecutive empty readings before trusting it (debounce)
+unsigned long dispensedAtMs = 0;          // millis() when moveOneSlot() finished for this intake
+bool irSettled = false;                   // whether IR_SETTLE_MS has elapsed since dispensedAtMs
+unsigned long emptySinceMs = 0;           // millis() the current continuous-HIGH streak started (0 = not counting)
+const unsigned long IR_SETTLE_MS = 1000;         // ignore the sensor for 1s right after dispensing
+const unsigned long IR_CONFIRM_DURATION_MS = 10000; // must read continuously empty for 10s to confirm
+
+unsigned long lastIrPrintMs = 0;
+const unsigned long IR_SERIAL_PRINT_INTERVAL_MS = 150; // throttle Serial output while watching
 
 // ── Button debounce state ────────────────────────────────────────
 int lastButtonState = HIGH;
@@ -201,25 +214,46 @@ void performDispense(const char* commandId, long intakeId) {
   moveOneSlot();
   sendDispensedEvent(commandId, intakeId);
 
-  // Motor's done — now watch the IR sensor for this intake going forward.
+  // Motor's done — start watching this intake, but don't trust the IR
+  // sensor yet (see pollIrSensor's settle-period handling below).
   watchingIntake = true;
   watchingIntakeId = intakeId;
-  irEmptyStreak = 0;
+  dispensedAtMs = millis();
+  irSettled = false;
+  emptySinceMs = 0;
 }
 
 void pollIrSensor() {
-  int state = digitalRead(IR_PIN);
-  if (state == HIGH) {
-    irEmptyStreak++;
-  } else {
-    irEmptyStreak = 0;
+  unsigned long now = millis();
+
+  // Don't trust the sensor until the settle period has elapsed — the pill
+  // may not have physically landed in front of it yet.
+  if (!irSettled) {
+    if (now - dispensedAtMs < IR_SETTLE_MS) return;
+    irSettled = true;
+    emptySinceMs = 0;
+    lastIrPrintMs = 0;
   }
 
-  if (irEmptyStreak >= IR_CONFIRM_STREAK) {
-    sendIntakeConfirmedEvent(watchingIntakeId);
-    watchingIntake = false;
-    watchingIntakeId = -1;
-    irEmptyStreak = 0;
+  int state = digitalRead(IR_PIN);
+
+  if (now - lastIrPrintMs >= IR_SERIAL_PRINT_INTERVAL_MS) {
+    lastIrPrintMs = now;
+    Serial.println(state == HIGH ? "IR: 1 - EMPTY" : "IR: 0 - PILL PRESENT");
+  }
+
+  if (state == HIGH) {
+    if (emptySinceMs == 0) {
+      emptySinceMs = now; // start of a new continuous-empty window
+    } else if (now - emptySinceMs >= IR_CONFIRM_DURATION_MS) {
+      sendIntakeConfirmedEvent(watchingIntakeId);
+      watchingIntake = false;
+      watchingIntakeId = -1;
+      emptySinceMs = 0;
+      irSettled = false;
+    }
+  } else {
+    emptySinceMs = 0; // pill still present (or present again) — reset the 10s window
   }
 }
 
