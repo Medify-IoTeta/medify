@@ -33,6 +33,7 @@ public class NotificationController {
             result.put("message", pending.message());
             result.put("intakeId", pending.intakeId());
             result.put("timing", pending.timing());
+            result.put("type", pending.type().name());
             return result;
         }
         return Map.of("status", "EMPTY");

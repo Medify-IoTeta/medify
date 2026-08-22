@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import medify.backend.api.service.DeviceService;
 import medify.backend.api.service.IntakeService;
+import medify.backend.domain.port.DeviceRepositoryPort;
+import medify.backend.domain.port.NotificationPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -23,16 +25,22 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
 
     private final DeviceConnectionAdapter connectionAdapter;
     private final DeviceService deviceService;
+    private final DeviceRepositoryPort deviceRepository;
     private final IntakeService intakeService;
+    private final NotificationPort notificationPort;
     private final ObjectMapper objectMapper;
 
     public DeviceWebSocketHandler(DeviceConnectionAdapter connectionAdapter,
                                    DeviceService deviceService,
+                                   DeviceRepositoryPort deviceRepository,
                                    IntakeService intakeService,
+                                   NotificationPort notificationPort,
                                    ObjectMapper objectMapper) {
         this.connectionAdapter = connectionAdapter;
         this.deviceService = deviceService;
+        this.deviceRepository = deviceRepository;
         this.intakeService = intakeService;
+        this.notificationPort = notificationPort;
         this.objectMapper = objectMapper;
     }
 
@@ -53,20 +61,31 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         switch (type) {
             case "heartbeat" -> deviceService.markOnline(deviceKey);
             case "ack" -> connectionAdapter.completeAck(node.path("commandId").asText());
-            case "event" -> handleEvent(node);
+            case "event" -> handleEvent(deviceKey, node);
             default -> logger.warn("Unknown message type '{}' from device {}", type, deviceKey);
         }
     }
 
-    private void handleEvent(JsonNode node) {
+    private void handleEvent(String deviceKey, JsonNode node) {
         String event = node.path("event").asText();
-        long intakeId = node.path("intakeId").asLong();
 
         switch (event) {
-            case "dispensed" -> intakeService.markDispensed(intakeId);
-            case "intake_confirmed" -> intakeService.markTaken(intakeId);
-            default -> logger.warn("Unknown device event '{}' for intake {}", event, intakeId);
+            case "dispensed" -> intakeService.markDispensed(node.path("intakeId").asLong());
+            case "intake_confirmed" -> intakeService.markTaken(node.path("intakeId").asLong());
+            case "button_pressed" -> handleButtonPressed(deviceKey);
+            default -> logger.warn("Unknown device event '{}' from device {}", event, deviceKey);
         }
+    }
+
+    /**
+     * Just a relay — resolves who to notify and hands off to NotificationPort.
+     * Does not look at intakes at all: which intake to act on is the app's call, not the backend's.
+     */
+    private void handleButtonPressed(String deviceKey) {
+        deviceRepository.findByDeviceKey(deviceKey).ifPresentOrElse(
+                device -> notificationPort.sendButtonPressed(device.getUserId()),
+                () -> logger.warn("button_pressed from unregistered device {}", deviceKey)
+        );
     }
 
     @Override
