@@ -103,25 +103,34 @@ class _StatusBadge extends StatelessWidget {
 
   String get _label {
     switch (status) {
-      case MedicationStatus.taken:   return 'Taken';
-      case MedicationStatus.pending: return 'Upcoming';
-      case MedicationStatus.missed:  return 'Missed';
+      case MedicationStatus.taken:      return 'Taken';
+      case MedicationStatus.pending:    return 'Upcoming';
+      case MedicationStatus.missed:     return 'Missed';
+      case MedicationStatus.dispensing: return 'Dispensing';
+      case MedicationStatus.dispensed:  return 'Confirm removal';
+      case MedicationStatus.incomplete: return 'Incomplete';
     }
   }
 
   IconData get _icon {
     switch (status) {
-      case MedicationStatus.taken:   return Icons.check_circle_outline;
-      case MedicationStatus.pending: return Icons.access_time;
-      case MedicationStatus.missed:  return Icons.warning_amber_outlined;
+      case MedicationStatus.taken:      return Icons.check_circle_outline;
+      case MedicationStatus.pending:    return Icons.access_time;
+      case MedicationStatus.missed:     return Icons.warning_amber_outlined;
+      case MedicationStatus.dispensing: return Icons.autorenew;
+      case MedicationStatus.dispensed:  return Icons.hourglass_bottom;
+      case MedicationStatus.incomplete: return Icons.hourglass_disabled;
     }
   }
 
   Color get _bgColor {
     switch (status) {
-      case MedicationStatus.taken:   return AppColors.success;
-      case MedicationStatus.pending: return AppColors.warning;
-      case MedicationStatus.missed:  return AppColors.error;
+      case MedicationStatus.taken:      return AppColors.success;
+      case MedicationStatus.pending:    return AppColors.warning;
+      case MedicationStatus.missed:     return AppColors.error;
+      case MedicationStatus.dispensing: return AppColors.primary;
+      case MedicationStatus.dispensed:  return AppColors.primary;
+      case MedicationStatus.incomplete: return AppColors.error;
     }
   }
 }

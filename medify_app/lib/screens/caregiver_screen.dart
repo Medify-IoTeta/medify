@@ -22,7 +22,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
 
   List<Map<String, dynamic>> _todayIntakes = [];
   List<Medicine> _medicines = [];
-  List<Map<String, dynamic>> _missedAlerts = [];
+  List<Map<String, dynamic>> _alerts = [];
   bool _loading = true;
 
   @override
@@ -43,8 +43,8 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
       setState(() {
         _todayIntakes = results[0] as List<Map<String, dynamic>>;
         _medicines    = results[1] as List<Medicine>;
-        _missedAlerts = (results[2] as List<Map<String, dynamic>>)
-            .where((n) => n['type'] == 'MISSED_INTAKE')
+        _alerts = (results[2] as List<Map<String, dynamic>>)
+            .where((n) => n['type'] == 'MISSED_INTAKE' || n['type'] == 'INCOMPLETE_INTAKE')
             .toList()
           ..sort((a, b) =>
               (b['sentTime'] as String).compareTo(a['sentTime'] as String));
@@ -149,17 +149,17 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
                   const SizedBox(height: AppSpacing.xxl),
 
                   _buildSectionHeader(
-                    'Missed Alerts${_missedAlerts.isNotEmpty ? ' (${_missedAlerts.length})' : ''}',
+                    'Alerts${_alerts.isNotEmpty ? ' (${_alerts.length})' : ''}',
                     Icons.warning_amber_rounded,
-                    _missedAlerts.isNotEmpty
+                    _alerts.isNotEmpty
                         ? AppColors.error
                         : AppColors.textSecondary,
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  if (_missedAlerts.isEmpty)
-                    _buildEmptyState('No missed alerts')
+                  if (_alerts.isEmpty)
+                    _buildEmptyState('No alerts')
                   else
-                    ..._missedAlerts.map(_buildAlertCard),
+                    ..._alerts.map(_buildAlertCard),
                 ],
               ),
             ),
@@ -410,6 +410,9 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
   Widget _buildAlertCard(Map<String, dynamic> alert) {
     final message  = alert['message']  as String? ?? '';
     final sentTime = alert['sentTime'] as String? ?? '';
+    final isIncomplete = alert['type'] == 'INCOMPLETE_INTAKE';
+    final icon = isIncomplete ? Icons.hourglass_disabled : Icons.warning_amber_rounded;
+    final label = isIncomplete ? 'Incomplete' : 'Missed';
 
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -429,14 +432,29 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
               color: AppColors.error.withValues(alpha: 0.12),
               borderRadius: AppRadius.mdBorder,
             ),
-            child: const Icon(Icons.warning_amber_rounded,
-                color: AppColors.error, size: 18),
+            child: Icon(icon, color: AppColors.error, size: 18),
           ),
           const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: AppColors.error.withValues(alpha: 0.15),
+                    borderRadius: AppRadius.smBorder,
+                  ),
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.error,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
                 Text(message, style: AppTextStyles.body),
                 if (sentTime.isNotEmpty) ...[
                   const SizedBox(height: 2),
@@ -461,11 +479,14 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'TAKEN':     return AppColors.success;
-      case 'MISSED':    return AppColors.error;
-      case 'POSTPONED': return AppColors.warning;
-      case 'SKIPPED':   return AppColors.textSecondary;
-      default:          return AppColors.warning;
+      case 'TAKEN':      return AppColors.success;
+      case 'MISSED':     return AppColors.error;
+      case 'INCOMPLETE': return AppColors.error;
+      case 'POSTPONED':  return AppColors.warning;
+      case 'SKIPPED':    return AppColors.textSecondary;
+      case 'DISPENSING':
+      case 'DISPENSED':  return AppColors.primary;
+      default:           return AppColors.warning;
     }
   }
 
@@ -548,21 +569,27 @@ class _StatusBadge extends StatelessWidget {
 
   String get _label {
     switch (status) {
-      case 'TAKEN':     return 'Taken';
-      case 'MISSED':    return 'Missed';
-      case 'POSTPONED': return 'Postponed';
-      case 'SKIPPED':   return 'Skipped';
-      default:          return 'Pending';
+      case 'TAKEN':      return 'Taken';
+      case 'MISSED':     return 'Missed';
+      case 'INCOMPLETE': return 'Incomplete';
+      case 'POSTPONED':  return 'Postponed';
+      case 'SKIPPED':    return 'Skipped';
+      case 'DISPENSING': return 'Dispensing';
+      case 'DISPENSED':  return 'Waiting for pickup';
+      default:           return 'Pending';
     }
   }
 
   IconData get _icon {
     switch (status) {
-      case 'TAKEN':     return Icons.check_circle_outline;
-      case 'MISSED':    return Icons.cancel_outlined;
-      case 'POSTPONED': return Icons.access_time;
-      case 'SKIPPED':   return Icons.remove_circle_outline;
-      default:          return Icons.radio_button_unchecked;
+      case 'TAKEN':      return Icons.check_circle_outline;
+      case 'MISSED':     return Icons.cancel_outlined;
+      case 'INCOMPLETE': return Icons.hourglass_disabled;
+      case 'POSTPONED':  return Icons.access_time;
+      case 'SKIPPED':    return Icons.remove_circle_outline;
+      case 'DISPENSING': return Icons.autorenew;
+      case 'DISPENSED':  return Icons.hourglass_bottom;
+      default:           return Icons.radio_button_unchecked;
     }
   }
 }

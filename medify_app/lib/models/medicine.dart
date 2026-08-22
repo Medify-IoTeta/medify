@@ -11,7 +11,7 @@ DateTime? _parseDateTime(dynamic value) {
   return null;
 }
 
-enum MedicationStatus { taken, pending, missed }
+enum MedicationStatus { taken, pending, missed, dispensing, dispensed, incomplete }
 
 enum DosageUnit { pills, mg, ml, drops, units }
 

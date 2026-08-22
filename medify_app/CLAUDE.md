@@ -46,11 +46,13 @@ Medicines are grouped by timing window (MORNING / NOON / EVENING) using `Expansi
 - On init: loads medicines + today's intakes in parallel; medicines whose timing window is TAKEN are marked `taken` in local state
 
 ### Notification Polling
-`HomeScreen` polls `GET /api/notification` every 3 seconds. On response:
-- Shows a dialog with the timing window name
-- "Show medicines ▼" / "Hide medicines" toggle expands to list medicines in that window with dosage
-- Actions: Choose Time (snooze to specific time → postponeIntake + snooze_custom:HH:MM), Remind in 15 min (postponeIntake + snooze_15), OK (confirm)
-- On confirm: approveIntake → dispenseFromDevice → releaseIntake → marks only medicines in the confirmed timing window as `taken` in local state
+`HomeScreen` polls `GET /api/notification` every 3 seconds. The response now carries an explicit `type` field:
+- `type: "BUTTON_PRESSED"` — the pill box's physical button was pressed. The backend deliberately doesn't pick an intake for this (see backend `CLAUDE.md` "Physical button"); `_handleButtonPressed()` calls `getTodayIntakes()`, finds the first `PENDING` one itself, and opens the same reminder dialog as if it came from a normal reminder. If nothing is pending, shows a snackbar instead.
+- Any other type (`WINDOW_REMINDER` etc.) — shows the reminder dialog as before:
+  - "Show medicines ▼" / "Hide medicines" toggle expands to list medicines in that window with dosage
+  - Actions: Choose Time (snooze to specific time → postponeIntake + snooze_custom:HH:MM), Remind in 15 min (postponeIntake + snooze_15), OK (confirm)
+
+**On confirm (`_handleConfirmIntake`):** approveIntake → `dispenseIntake` (relays a dispense command to the device through the backend's WebSocket connection — the app never talks to the device directly) → poll `getIntake(id)` every 3s for up to ~2 minutes waiting for `TAKEN`. Medicines in the confirmed timing window move through local `MedicationStatus` states as this happens: `dispensing` (right after the dispense call) → `dispensed` (if the poll gives up before the IR sensor confirms — this is a normal, expected stopping point, not an error) → `taken` (once the backend reports `TAKEN`). A `409` from `dispenseIntake` (e.g. device offline) reverts the window back to `pending` and shows the backend's actual error message.
 
 ### Sidebar (AppSidebar)
 Items: **Home**, **Add Medicine** (patient only), **Edit Medicines** (patient only), **Fill Pill Box** (both roles), **Log Out**.
@@ -61,7 +63,7 @@ Takes `required int userId` (the caregiver's real backend id, resolved by `AuthG
 - **Summary card** — `taken / totalWindows` windows completed (total based on medicines, not intakes)
 - **Medication Schedule** — always visible, grouped by window, expandable
 - **Today's Intake Status** — intake records from backend, expandable per window
-- **Missed Alerts** — filtered from notification log where type == MISSED_INTAKE
+- **Alerts** (`_alerts`, was "Missed Alerts") — filtered from notification log where type is `MISSED_INTAKE` or `INCOMPLETE_INTAKE`; `_buildAlertCard` shows a distinct icon + "Missed"/"Incomplete" label chip per entry so the two are visually distinguishable, not just by message text
 
 ### Fill Pill Box cross-role sync
 `fill_box_guide_screen.dart` polls `GET /api/box-refill/current` every 3 seconds while visible (same `Future.doWhile` pattern as the notification poll) so a fill made from one role's session shows up in the other's within a few seconds. Both patient and caregiver requests resolve to the same box-refill session server-side (backend resolves "the patient" from the caregiver's `CaregiverLink`), so no client-side merging is needed — just re-fetch and replace.
@@ -81,22 +83,22 @@ Base URLs:
 | `sendNotification(message, intakeId)` | POST /api/notification |
 | `getTodayIntakes()` | GET /api/intakes/today |
 | `approveIntake(id)` | PATCH /api/intakes/{id}/approve |
-| `releaseIntake(id)` | PATCH /api/intakes/{id}/released |
+| `dispenseIntake(id)` | POST /api/intakes/{id}/dispense — relays to the device via the backend's WebSocket; throws `ApiException` with the backend's message (e.g. device offline) on failure |
+| `getIntake(id)` | GET /api/intakes/{id} — used to poll status after dispensing |
 | `skipIntake(id)` | PATCH /api/intakes/{id}/skip |
 | `postponeIntake(id)` | PATCH /api/intakes/{id}/postpone |
 | `getNotificationsLog(userId, {from, to})` | GET /api/notifications-log?userId={id}[&from=&to=] |
-| `dispenseFromDevice()` | GET http://192.168.7.18/move — 15s timeout, handles JSON or plain-text "OK" |
 | `registerBackendUser(idToken, role, firstName, lastName, {patientEmail})` | POST /api/auth/register — claims/creates the local `User` row for a Firebase account. `patientEmail` required for `role: 'CAREGIVER'` |
 | `getCurrentBackendUser()` | GET /api/auth/me — 404 → `null` (not registered yet) |
 | `registerFcmToken(token)` | PUT /api/users/me/fcm-token — identity comes from the auth header, no userId param |
 
-Every method above (except `dispenseFromDevice`, which talks straight to the embedded box) sends `Authorization: Bearer <idToken>` via a shared `_authHeaders()` helper, using `AuthService().idToken()`.
+There is no device-facing base URL anymore — every call goes to the backend, which relays to the device over its own WebSocket connection. Every method above sends `Authorization: Bearer <idToken>` via a shared `_authHeaders()` helper, using `AuthService().idToken()`.
 
 ## Models
 
 `TimePeriod`: `morning`, `noon`, `evening` — `.name.toUpperCase()` to match backend `Timing` enum.
 
-`MedicationStatus`: `pending`, `taken`, `missed`
+`MedicationStatus`: `pending`, `dispensing`, `dispensed`, `taken`, `missed`, `incomplete` — `dispensing`/`dispensed`/`incomplete` are local-only reflections of the backend's `DISPENSING`/`DISPENSED`/`INCOMPLETE` intake states (mapped in `home_screen.dart`'s `_mapIntakeStatus`). `incomplete` means the backend's `MissedIntakeScheduler` swept a `DISPENSED` intake whose IR-confirmation grace period expired — set entirely server-side, the app just displays it.
 
 `InstructionOption`: `afterFood`, `emptyStomach`, `other`
 

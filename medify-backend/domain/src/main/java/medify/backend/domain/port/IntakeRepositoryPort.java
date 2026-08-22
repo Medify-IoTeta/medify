@@ -11,5 +11,6 @@ public interface IntakeRepositoryPort {
     Optional<Intake> findById(Long id);
     List<Intake> findByUserIdBetween(Long userId, LocalDateTime from, LocalDateTime to);
     List<Intake> findExpiredPendingIntakes(LocalDateTime now);
+    List<Intake> findByStatusAndDispensedTimeBefore(IntakeStatus status, LocalDateTime cutoff);
     long countTakenSince(Long userId, IntakeStatus status, LocalDateTime since);
 }

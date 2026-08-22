@@ -1,5 +1,5 @@
 package medify.backend.domain.model;
 
 public enum IntakeStatus {
-    PENDING, APPROVED, TAKEN, MISSED, SKIPPED, POSTPONED
+    PENDING, APPROVED, DISPENSING, DISPENSED, TAKEN, MISSED, INCOMPLETE, SKIPPED, POSTPONED
 }
