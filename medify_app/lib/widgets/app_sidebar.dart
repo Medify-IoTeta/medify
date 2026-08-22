@@ -7,12 +7,14 @@ class AppSidebar extends StatelessWidget {
   final VoidCallback? onAddMedicine;
   final VoidCallback? onEditMedicines;
   final VoidCallback? onFillBox;
+  final VoidCallback? onSettings;
 
   const AppSidebar({
     super.key,
     this.onAddMedicine,
     this.onEditMedicines,
     this.onFillBox,
+    this.onSettings,
   });
 
   @override
@@ -76,6 +78,15 @@ class AppSidebar extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(context);
                     onFillBox?.call();
+                  },
+                ),
+              if (onSettings != null)
+                _SidebarItem(
+                  icon: Icons.settings_outlined,
+                  label: 'Settings',
+                  onTap: () {
+                    Navigator.pop(context);
+                    onSettings?.call();
                   },
                 ),
               const Divider(height: AppSpacing.xl),

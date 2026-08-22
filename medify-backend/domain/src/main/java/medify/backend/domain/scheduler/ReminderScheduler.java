@@ -1,22 +1,30 @@
 package medify.backend.domain.scheduler;
 
 import medify.backend.domain.model.Intake;
+import medify.backend.domain.model.IntakeSettings;
 import medify.backend.domain.model.IntakeStatus;
 import medify.backend.domain.model.Medicine;
 import medify.backend.domain.model.Timing;
 import medify.backend.domain.model.UserType;
 import medify.backend.domain.port.IntakeRepositoryPort;
+import medify.backend.domain.port.IntakeSettingsRepositoryPort;
 import medify.backend.domain.port.MedicineRepositoryPort;
 import medify.backend.domain.port.NotificationPort;
 import medify.backend.domain.port.UserRepositoryPort;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 
 @Component
 public class ReminderScheduler {
@@ -25,30 +33,60 @@ public class ReminderScheduler {
     private final IntakeRepositoryPort intakeRepository;
     private final NotificationPort notificationPort;
     private final UserRepositoryPort userRepository;
+    private final IntakeSettingsRepositoryPort intakeSettingsRepository;
+    private final TaskScheduler taskScheduler;
+    private final Map<Timing, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
 
     public ReminderScheduler(MedicineRepositoryPort medicineRepository,
                              IntakeRepositoryPort intakeRepository,
                              NotificationPort notificationPort,
-                             UserRepositoryPort userRepository) {
+                             UserRepositoryPort userRepository,
+                             IntakeSettingsRepositoryPort intakeSettingsRepository,
+                             TaskScheduler taskScheduler) {
         this.medicineRepository = medicineRepository;
         this.intakeRepository = intakeRepository;
         this.notificationPort = notificationPort;
         this.userRepository = userRepository;
+        this.intakeSettingsRepository = intakeSettingsRepository;
+        this.taskScheduler = taskScheduler;
     }
 
-    @Scheduled(cron = "0 49 19 * * *")
-    public void sendMorningReminder() {
-        sendReminder(Timing.MORNING);
+    @PostConstruct
+    public void init() {
+        rescheduleAll();
     }
 
-    @Scheduled(cron = "0 46 19 * * *")
-    public void sendNoonReminder() {
-        sendReminder(Timing.NOON);
+    /** Re-reads intake_settings and re-queues all three reminder triggers — called on startup and whenever settings are saved. */
+    public void rescheduleAll() {
+        for (Timing timing : Timing.values()) {
+            reschedule(timing);
+        }
     }
 
-    @Scheduled(cron = "0 48 19 * * *")
-    public void sendEveningReminder() {
-        sendReminder(Timing.EVENING);
+    private void reschedule(Timing timing) {
+        ScheduledFuture<?> existing = scheduledTasks.get(timing);
+        if (existing != null) {
+            existing.cancel(false);
+        }
+        ScheduledFuture<?> future = taskScheduler.schedule(
+                () -> sendReminder(timing),
+                triggerContext -> nextExecutionInstant(timing));
+        scheduledTasks.put(timing, future);
+    }
+
+    private Instant nextExecutionInstant(Timing timing) {
+        IntakeSettings settings = intakeSettingsRepository.getSettings();
+        if (settings == null) {
+            logger.warn("No intake settings row found — retrying reminder scheduling in 1 minute");
+            return Instant.now().plusSeconds(60);
+        }
+        LocalTime configured = settings.timeFor(timing);
+        ZonedDateTime now = ZonedDateTime.now();
+        ZonedDateTime next = now.with(configured);
+        if (!next.isAfter(now)) {
+            next = next.plusDays(1);
+        }
+        return next.toInstant();
     }
 
     public void sendReminder(Timing timing) {

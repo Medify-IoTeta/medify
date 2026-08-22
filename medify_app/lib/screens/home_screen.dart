@@ -11,6 +11,7 @@ import '../widgets/progress_ring.dart';
 import 'register_screen.dart';
 import 'edit_medicines_screen.dart';
 import 'fill_box_guide_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -174,6 +175,13 @@ class _HomeScreenState extends State<HomeScreen> {
     // Reload medicines after editing (deletions/disables may have changed state)
     setState(() => _medicines.clear());
     _loadMedicines();
+  }
+
+  Future<void> _goToSettings() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const SettingsScreen(isPatient: true)),
+    );
   }
 
   // ── Polling ──────────────────────────────────────────────────
@@ -360,6 +368,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onAddMedicine: _goToRegister,
         onEditMedicines: _goToEdit,
         onFillBox: _goToFillGuide,
+        onSettings: _goToSettings,
       ),
       body: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),

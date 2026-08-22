@@ -28,7 +28,7 @@ Never _throwApiException(http.Response response) {
 class ApiService {
   static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
   //static const String baseUrl = 'http://192.168.7.15:8080'; // for android over WiFi (if not using adb reverse)
-  static const String embeddedBaseUrl = 'http://192.168.7.21'; // embedded url
+  static const String embeddedBaseUrl = 'http://192.168.7.24'; // embedded url
 
   final AuthService _authService = AuthService();
 
@@ -321,6 +321,63 @@ class ApiService {
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to unmark slot: ${response.statusCode}');
     }
+  }
+
+  // ── Intake settings ──────────────────────────────────────────
+
+  Future<Map<String, String>> getIntakeSettings() async {
+    final url = Uri.parse('$baseUrl/api/intake-settings');
+    final response = await http.get(url, headers: await _authHeaders());
+    if (response.statusCode == 200) {
+      return Map<String, String>.from(jsonDecode(response.body));
+    }
+    _throwApiException(response);
+  }
+
+  Future<Map<String, String>> updateIntakeSettings({
+    required String morning,
+    required String noon,
+    required String evening,
+  }) async {
+    final url = Uri.parse('$baseUrl/api/intake-settings');
+    final response = await http.put(
+      url,
+      headers: await _authHeaders(json: true),
+      body: jsonEncode({'morning': morning, 'noon': noon, 'evening': evening}),
+    );
+    if (response.statusCode == 200) {
+      return Map<String, String>.from(jsonDecode(response.body));
+    }
+    _throwApiException(response);
+  }
+
+  // ── Caregiver management ────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> getCaregivers() async {
+    final url = Uri.parse('$baseUrl/api/caregiver-links/mine');
+    final response = await http.get(url, headers: await _authHeaders());
+    if (response.statusCode == 200) {
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.cast<Map<String, dynamic>>();
+    }
+    _throwApiException(response);
+  }
+
+  Future<Map<String, dynamic>> addCaregiver(String email) async {
+    final url = Uri.parse('$baseUrl/api/caregiver-links/mine');
+    final response = await http.post(
+      url,
+      headers: await _authHeaders(json: true),
+      body: jsonEncode({'email': email}),
+    );
+    if (response.statusCode == 200) return jsonDecode(response.body);
+    _throwApiException(response);
+  }
+
+  Future<void> removeCaregiver(int caregiverId) async {
+    final url = Uri.parse('$baseUrl/api/caregiver-links/mine/$caregiverId');
+    final response = await http.delete(url, headers: await _authHeaders());
+    if (response.statusCode != 200) _throwApiException(response);
   }
 
   // ── Device ────────────────────────────────────────────────────

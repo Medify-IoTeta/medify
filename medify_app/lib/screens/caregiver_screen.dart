@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../utils/app_logger.dart';
 import '../widgets/app_sidebar.dart';
 import 'fill_box_guide_screen.dart';
+import 'settings_screen.dart';
 
 class CaregiverScreen extends StatefulWidget {
   final int userId;
@@ -76,6 +77,13 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
     );
   }
 
+  Future<void> _goToSettings() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const SettingsScreen(isPatient: false)),
+    );
+  }
+
   // ── Build ─────────────────────────────────────────────────────
 
   @override
@@ -103,7 +111,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
           ),
         ],
       ),
-      drawer: AppSidebar(onFillBox: _goToFillGuide),
+      drawer: AppSidebar(onFillBox: _goToFillGuide, onSettings: _goToSettings),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
