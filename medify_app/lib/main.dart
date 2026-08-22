@@ -2,8 +2,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 
-import 'screens/home_screen.dart';
+import 'screens/auth_gate.dart';
 import 'theme/app_theme.dart';
+import 'utils/app_logger.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -16,7 +17,7 @@ void main() async {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (e) {
-    debugPrint('Firebase init skipped: $e');
+    AppLogger.error('Firebase init skipped', e, 'Main');
   }
   runApp(const MedifyApp());
 }
@@ -30,7 +31,7 @@ class MedifyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Medify',
       theme: AppTheme.light,
-      home: const HomeScreen(),
+      home: const AuthGate(),
     );
   }
 }

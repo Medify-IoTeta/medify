@@ -25,7 +25,12 @@ public class BoxSlotFillRepository implements BoxSlotFillRepositoryPort {
     }
 
     @Override
-    public void deleteBySessionIdAndSlotNumber(Long sessionId, int slotNumber) {
-        jpaRepository.deleteBySessionIdAndSlotNumber(sessionId, slotNumber);
+    public boolean existsBySessionIdAndSlotNumberAndMedicineId(Long sessionId, int slotNumber, Long medicineId) {
+        return jpaRepository.existsBySessionIdAndSlotNumberAndMedicineId(sessionId, slotNumber, medicineId);
+    }
+
+    @Override
+    public void deleteBySessionIdAndSlotNumberAndMedicineId(Long sessionId, int slotNumber, Long medicineId) {
+        jpaRepository.deleteBySessionIdAndSlotNumberAndMedicineId(sessionId, slotNumber, medicineId);
     }
 }

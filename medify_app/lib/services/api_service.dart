@@ -1,15 +1,48 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/medicine.dart';
+import 'auth_service.dart';
+
+/// Carries the backend's actual error message (not just the HTTP status),
+/// so callers can show the real reason instead of guessing from a status code.
+class ApiException implements Exception {
+  final int statusCode;
+  final String message;
+  ApiException(this.statusCode, this.message);
+
+  @override
+  String toString() => message;
+}
+
+Never _throwApiException(http.Response response) {
+  String message = 'Request failed (${response.statusCode})';
+  try {
+    final body = jsonDecode(response.body);
+    if (body is Map && body['message'] is String) message = body['message'];
+  } catch (_) {
+    // non-JSON body — keep the generic message
+  }
+  throw ApiException(response.statusCode, message);
+}
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:8080'; // for browser
-  //static const String baseUrl = 'http://192.168.7.17:8080'; // for android
+  static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
+  //static const String baseUrl = 'http://192.168.7.15:8080'; // for android over WiFi (if not using adb reverse)
   static const String embeddedBaseUrl = 'http://192.168.7.21'; // embedded url
+
+  final AuthService _authService = AuthService();
+
+  Future<Map<String, String>> _authHeaders({bool json = false}) async {
+    final token = await _authService.idToken();
+    return {
+      if (token != null) 'Authorization': 'Bearer $token',
+      if (json) 'Content-Type': 'application/json',
+    };
+  }
 
   Future<List<Medicine>> getMedicines() async {
     final url = Uri.parse('$baseUrl/api/medications');
-    final response = await http.get(url);
+    final response = await http.get(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) {
       final List<dynamic> data = jsonDecode(response.body);
@@ -24,7 +57,7 @@ class ApiService {
 
     final response = await http.post(
       url,
-      headers: {'Content-Type': 'application/json'},
+      headers: await _authHeaders(json: true),
       body: jsonEncode({
         'userId': 1,
         'name': medicine.name,
@@ -47,11 +80,44 @@ class ApiService {
     throw Exception('Failed to register medicine: ${response.statusCode}');
   }
 
+  // ── Auth ─────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> registerBackendUser(
+    String idToken,
+    String role,
+    String firstName,
+    String lastName, {
+    String? patientEmail,
+  }) async {
+    final url = Uri.parse('$baseUrl/api/auth/register');
+    final response = await http.post(
+      url,
+      headers: await _authHeaders(json: true),
+      body: jsonEncode({
+        'idToken': idToken,
+        'role': role,
+        'firstName': firstName,
+        'lastName': lastName,
+        if (patientEmail != null) 'patientEmail': patientEmail,
+      }),
+    );
+    if (response.statusCode == 200) return jsonDecode(response.body);
+    _throwApiException(response);
+  }
+
+  Future<Map<String, dynamic>?> getCurrentBackendUser() async {
+    final url = Uri.parse('$baseUrl/api/auth/me');
+    final response = await http.get(url, headers: await _authHeaders());
+    if (response.statusCode == 404) return null;
+    if (response.statusCode == 200) return jsonDecode(response.body);
+    throw Exception('Failed to get current user: ${response.statusCode}');
+  }
+
   // ── Notifications ─────────────────────────────────────────────
 
   Future<Map<String, dynamic>> getNotification() async {
     final url = Uri.parse('$baseUrl/api/notification');
-    final response = await http.get(url);
+    final response = await http.get(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -65,7 +131,7 @@ class ApiService {
 
     final response = await http.post(
       url,
-      headers: {'Content-Type': 'application/json'},
+      headers: await _authHeaders(json: true),
       body: jsonEncode({
         'message': message,
         if (intakeId != null) 'intakeId': intakeId,
@@ -81,7 +147,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> approveIntake(int intakeId) async {
     final url = Uri.parse('$baseUrl/api/intakes/$intakeId/approve');
-    final response = await http.patch(url);
+    final response = await http.patch(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw Exception('Failed to approve intake: ${response.statusCode}');
@@ -89,7 +155,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> releaseIntake(int intakeId) async {
     final url = Uri.parse('$baseUrl/api/intakes/$intakeId/released');
-    final response = await http.patch(url);
+    final response = await http.patch(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw Exception('Failed to release intake: ${response.statusCode}');
@@ -97,7 +163,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> skipIntake(int intakeId) async {
     final url = Uri.parse('$baseUrl/api/intakes/$intakeId/skip');
-    final response = await http.patch(url);
+    final response = await http.patch(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw Exception('Failed to skip intake: ${response.statusCode}');
@@ -105,7 +171,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> postponeIntake(int intakeId) async {
     final url = Uri.parse('$baseUrl/api/intakes/$intakeId/postpone');
-    final response = await http.patch(url);
+    final response = await http.patch(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw Exception('Failed to postpone intake: ${response.statusCode}');
@@ -113,7 +179,7 @@ class ApiService {
 
   Future<List<Map<String, dynamic>>> getTodayIntakes() async {
     final url = Uri.parse('$baseUrl/api/intakes/today');
-    final response = await http.get(url);
+    final response = await http.get(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) {
       final List<dynamic> data = jsonDecode(response.body);
@@ -136,7 +202,7 @@ class ApiService {
     final url = Uri.parse('$baseUrl/api/medications/$id');
     final response = await http.put(
       url,
-      headers: {'Content-Type': 'application/json'},
+      headers: await _authHeaders(json: true),
       body: jsonEncode({
         'dosageAmount': dosageAmount,
         'dosageUnit': dosageUnit,
@@ -152,7 +218,7 @@ class ApiService {
 
   Future<void> deleteMedicine(String id) async {
     final url = Uri.parse('$baseUrl/api/medications/$id');
-    final response = await http.delete(url);
+    final response = await http.delete(url, headers: await _authHeaders());
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to delete medicine: ${response.statusCode}');
     }
@@ -160,14 +226,14 @@ class ApiService {
 
   Future<Medicine> disableMedicine(String id) async {
     final url = Uri.parse('$baseUrl/api/medications/$id/disable');
-    final response = await http.patch(url);
+    final response = await http.patch(url, headers: await _authHeaders());
     if (response.statusCode == 200) return Medicine.fromJson(jsonDecode(response.body));
     throw Exception('Failed to disable medicine: ${response.statusCode}');
   }
 
   Future<Medicine> enableMedicine(String id) async {
     final url = Uri.parse('$baseUrl/api/medications/$id/enable');
-    final response = await http.patch(url);
+    final response = await http.patch(url, headers: await _authHeaders());
     if (response.statusCode == 200) return Medicine.fromJson(jsonDecode(response.body));
     throw Exception('Failed to enable medicine: ${response.statusCode}');
   }
@@ -176,7 +242,7 @@ class ApiService {
     final url = Uri.parse('$baseUrl/api/medications/$id/disable-until');
     final response = await http.patch(
       url,
-      headers: {'Content-Type': 'application/json'},
+      headers: await _authHeaders(json: true),
       body: jsonEncode({'until': until.toIso8601String().split('.').first}),
     );
     if (response.statusCode == 200) return Medicine.fromJson(jsonDecode(response.body));
@@ -185,7 +251,7 @@ class ApiService {
 
   Future<Medicine> clearDisabledUntil(String id) async {
     final url = Uri.parse('$baseUrl/api/medications/$id/clear-until');
-    final response = await http.patch(url);
+    final response = await http.patch(url, headers: await _authHeaders());
     if (response.statusCode == 200) return Medicine.fromJson(jsonDecode(response.body));
     throw Exception('Failed to clear disabled-until: ${response.statusCode}');
   }
@@ -201,7 +267,7 @@ class ApiService {
     if (from != null) params['from'] = from.toIso8601String();
     if (to != null) params['to'] = to.toIso8601String();
     final url = Uri.parse('$baseUrl/api/notifications-log').replace(queryParameters: params);
-    final response = await http.get(url);
+    final response = await http.get(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) {
       final List<dynamic> data = jsonDecode(response.body);
@@ -213,11 +279,11 @@ class ApiService {
 
   // ── FCM Token ─────────────────────────────────────────────────
 
-  Future<void> registerFcmToken(int userId, String token) async {
-    final url = Uri.parse('$baseUrl/api/users/$userId/fcm-token');
+  Future<void> registerFcmToken(String token) async {
+    final url = Uri.parse('$baseUrl/api/users/me/fcm-token');
     await http.put(
       url,
-      headers: {'Content-Type': 'application/json'},
+      headers: await _authHeaders(json: true),
       body: jsonEncode({'token': token}),
     );
   }
@@ -226,30 +292,32 @@ class ApiService {
 
   Future<Map<String, dynamic>> startRefill() async {
     final url = Uri.parse('$baseUrl/api/box-refill/start');
-    final response = await http.post(url);
+    final response = await http.post(url, headers: await _authHeaders());
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw Exception('Failed to start refill: ${response.statusCode}');
   }
 
   Future<Map<String, dynamic>?> getRefillState() async {
     final url = Uri.parse('$baseUrl/api/box-refill/current');
-    final response = await http.get(url);
+    final response = await http.get(url, headers: await _authHeaders());
     if (response.statusCode == 204) return null;
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw Exception('Failed to get refill state: ${response.statusCode}');
   }
 
-  Future<void> markSlotFilled(int slotNumber) async {
-    final url = Uri.parse('$baseUrl/api/box-refill/slots/$slotNumber/fill');
-    final response = await http.post(url);
+  Future<void> markSlotFilled(int slotNumber, String medicineId) async {
+    final url = Uri.parse(
+        '$baseUrl/api/box-refill/slots/$slotNumber/medications/$medicineId/fill');
+    final response = await http.post(url, headers: await _authHeaders());
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to mark slot filled: ${response.statusCode}');
     }
   }
 
-  Future<void> unmarkSlotFilled(int slotNumber) async {
-    final url = Uri.parse('$baseUrl/api/box-refill/slots/$slotNumber/fill');
-    final response = await http.delete(url);
+  Future<void> unmarkSlotFilled(int slotNumber, String medicineId) async {
+    final url = Uri.parse(
+        '$baseUrl/api/box-refill/slots/$slotNumber/medications/$medicineId/fill');
+    final response = await http.delete(url, headers: await _authHeaders());
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to unmark slot: ${response.statusCode}');
     }

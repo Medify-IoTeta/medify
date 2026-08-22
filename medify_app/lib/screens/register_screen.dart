@@ -97,7 +97,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Image.asset('assets/medify-logo.png', height: 56),
+            child: Image.asset('assets/medify-logo.png', height: 80),
           ),
         ],
       ),

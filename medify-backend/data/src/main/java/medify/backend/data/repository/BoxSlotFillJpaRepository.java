@@ -12,8 +12,12 @@ public interface BoxSlotFillJpaRepository extends JpaRepository<BoxSlotFill, Lon
 
     List<BoxSlotFill> findBySessionId(Long sessionId);
 
+    boolean existsBySessionIdAndSlotNumberAndMedicineId(Long sessionId, int slotNumber, Long medicineId);
+
     @Modifying
     @Transactional
-    @Query("DELETE FROM BoxSlotFill f WHERE f.sessionId = :sessionId AND f.slotNumber = :slotNumber")
-    void deleteBySessionIdAndSlotNumber(@Param("sessionId") Long sessionId, @Param("slotNumber") int slotNumber);
+    @Query("DELETE FROM BoxSlotFill f WHERE f.sessionId = :sessionId AND f.slotNumber = :slotNumber AND f.medicineId = :medicineId")
+    void deleteBySessionIdAndSlotNumberAndMedicineId(@Param("sessionId") Long sessionId,
+                                                       @Param("slotNumber") int slotNumber,
+                                                       @Param("medicineId") Long medicineId);
 }

@@ -53,30 +53,38 @@ Scheduled cron times (currently set to demo/test times):
 
 Production times would be 08:00 / 13:00 / 20:00 — change cron expressions in `ReminderScheduler.java`.
 
+## Auth
+
+Every `/api/**` request requires `Authorization: Bearer <Firebase ID token>` — enforced by `AuthInterceptor` (`api/auth/`), which verifies the token via `FirebaseAuth` and, if a local `User` row exists for that `firebase_uid`, attaches it to the request as `CurrentUserContext`. Controllers call `authService.resolvePatientId(currentUserContext.getUser())` instead of hardcoding an id: a patient resolves to their own id, a caregiver resolves to the patient they're linked to via `caregiver_links` (`AuthService.resolvePatientId`). One patient per deployment; caregivers register by supplying that patient's email, verified server-side (`AuthService.register` looks it up via `UserRepositoryPort.findByEmail`, rejects with 404 if no matching registered patient), then auto-linked via `caregiver_links`. Scheduled/internal callers with no request context (`ReminderScheduler`, `NotificationAdapter`) resolve the patient via `UserRepositoryPort.findFirstByType(PATIENT)` instead.
+
 ## REST API
 
-All endpoints under `/api/*` with `@CrossOrigin(origins = "*")`.
+All endpoints under `/api/*` with `@CrossOrigin(origins = "*")`; all require the bearer token above except that `/api/auth/register` doesn't require a pre-existing local `User` (it creates one).
 
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/api/auth/register` | `{idToken, role, firstName, lastName, patientEmail?}` → claims/creates the local `User` for this Firebase account. `patientEmail` is required for `role=CAREGIVER` and must match an already-registered patient (404 if not found); a second claimed `role=PATIENT` signup is rejected (409) |
+| GET | `/api/auth/me` | Returns the resolved `User` for the current token, or 404 if not registered yet |
 | GET | `/api/notification` | Poll for pending notification |
 | POST | `/api/notification` | Send user response (confirm/snooze/skip) |
 | GET | `/api/medications` | List all medicines |
 | POST | `/api/medications` | Register a new medicine |
-| GET | `/api/intakes/today` | Today's intakes for userId=1 |
+| GET | `/api/intakes/today` | Today's intakes for the resolved patient |
 | PATCH | `/api/intakes/{id}/approve` | User approved intake |
 | PATCH | `/api/intakes/{id}/released` | Device confirmed compartment emptied → TAKEN |
 | PATCH | `/api/intakes/{id}/skip` | User skipped intake |
 | PATCH | `/api/intakes/{id}/postpone` | User postponed intake |
 | PATCH | `/api/intakes/{id}/missed` | Mark intake as MISSED |
 | GET | `/api/notifications-log` | Notification history (query param: userId) |
+| PUT | `/api/users/me/fcm-token` | Sets the FCM token for the authenticated user (no id param — inferred from the token) |
 
 ## Database
 
-PostgreSQL 15 via Docker (`medify` db, `medify_user`/`medify_pass`, port 5432). Schema managed by Flyway (`ddl-auto=validate`). Key tables: `medications`, `users`, `intakes`, `caregiver_links`, `notification_logs`.
+PostgreSQL 15 via Docker (`medify` db, `medify_user`/`medify_pass`, port 5432). Schema managed by Flyway (`ddl-auto=validate`). Key tables: `medications`, `users` (has `type` PATIENT/CAREGIVER and a unique nullable `firebase_uid`, claimed on registration), `intakes`, `caregiver_links`, `notification_logs`.
 
 ## Tech
 
 - Java 21, Spring Boot 3.4.0
 - Lombok (`@Data`, `@NoArgsConstructor`, `@AllArgsConstructor`) on all domain models
-- userId is hardcoded to `1L` throughout — multi-user support not yet implemented
+- Firebase Admin SDK (`firebase-admin`, already used for FCM push) also backs auth — `FirebaseConfig` exposes a `FirebaseAuth` bean used by `AuthInterceptor`/`AuthService` to verify ID tokens
+- One-patient-plus-caregiver(s)-per-deployment model, not full multi-tenancy — see "Auth" above

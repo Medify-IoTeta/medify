@@ -16,11 +16,13 @@ import java.util.stream.Collectors;
 @Service
 public class BoxRefillService {
 
+    public record FilledCell(int slotNumber, Long medicineId) {}
+
     public record BoxRefillState(
             Long sessionId,
             LocalDateTime startedAt,
             long currentSlot,
-            List<Integer> filledSlots,
+            List<FilledCell> filledCells,
             boolean active) {}
 
     private final BoxRefillSessionRepositoryPort sessionRepository;
@@ -49,27 +51,31 @@ public class BoxRefillService {
         return sessionRepository.findActiveByUserId(userId).map(session -> {
             long currentSlot = intakeRepository.countTakenSince(
                     userId, IntakeStatus.TAKEN, session.getStartedAt());
-            List<Integer> filledSlots = slotFillRepository.findBySessionId(session.getId())
+            List<FilledCell> filledCells = slotFillRepository.findBySessionId(session.getId())
                     .stream()
-                    .map(BoxSlotFill::getSlotNumber)
+                    .map(f -> new FilledCell(f.getSlotNumber(), f.getMedicineId()))
                     .collect(Collectors.toList());
-            return new BoxRefillState(session.getId(), session.getStartedAt(), currentSlot, filledSlots, true);
+            return new BoxRefillState(session.getId(), session.getStartedAt(), currentSlot, filledCells, true);
         });
     }
 
-    public void markSlotFilled(Long userId, int slotNumber) {
+    public void markSlotFilled(Long userId, int slotNumber, Long medicineId) {
         BoxRefillSession session = sessionRepository.findActiveByUserId(userId)
                 .orElseThrow(() -> new RuntimeException("No active refill session"));
+        if (slotFillRepository.existsBySessionIdAndSlotNumberAndMedicineId(session.getId(), slotNumber, medicineId)) {
+            return;
+        }
         BoxSlotFill fill = new BoxSlotFill();
         fill.setSessionId(session.getId());
         fill.setSlotNumber(slotNumber);
+        fill.setMedicineId(medicineId);
         fill.setFilledAt(LocalDateTime.now());
         slotFillRepository.save(fill);
     }
 
-    public void unmarkSlotFilled(Long userId, int slotNumber) {
+    public void unmarkSlotFilled(Long userId, int slotNumber, Long medicineId) {
         BoxRefillSession session = sessionRepository.findActiveByUserId(userId)
                 .orElseThrow(() -> new RuntimeException("No active refill session"));
-        slotFillRepository.deleteBySessionIdAndSlotNumber(session.getId(), slotNumber);
+        slotFillRepository.deleteBySessionIdAndSlotNumberAndMedicineId(session.getId(), slotNumber, medicineId);
     }
 }
