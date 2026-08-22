@@ -71,7 +71,11 @@ public class DeviceConnectionAdapter implements DeviceConnectionPort {
             return DispatchOutcome.ACKED;
         } catch (TimeoutException e) {
             return DispatchOutcome.ACK_TIMEOUT;
-        } catch (IOException | InterruptedException | ExecutionException e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Failed to dispatch dispense command to device {}: {}", deviceKey, e.getMessage());
+            return DispatchOutcome.OFFLINE;
+        } catch (IOException | ExecutionException e) {
             logger.warn("Failed to dispatch dispense command to device {}: {}", deviceKey, e.getMessage());
             return DispatchOutcome.OFFLINE;
         } finally {

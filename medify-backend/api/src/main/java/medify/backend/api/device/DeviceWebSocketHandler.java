@@ -1,5 +1,6 @@
 package medify.backend.api.device;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import medify.backend.api.service.DeviceService;
@@ -55,14 +56,20 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         String deviceKey = deviceKey(session);
-        JsonNode node = objectMapper.readTree(message.getPayload());
-        String type = node.path("type").asText();
+        try {
+            JsonNode node = objectMapper.readTree(message.getPayload());
+            String type = node.path("type").asText();
 
-        switch (type) {
-            case "heartbeat" -> deviceService.markOnline(deviceKey);
-            case "ack" -> connectionAdapter.completeAck(node.path("commandId").asText());
-            case "event" -> handleEvent(deviceKey, node);
-            default -> logger.warn("Unknown message type '{}' from device {}", type, deviceKey);
+            switch (type) {
+                case "heartbeat" -> deviceService.markOnline(deviceKey);
+                case "ack" -> connectionAdapter.completeAck(node.path("commandId").asText());
+                case "event" -> handleEvent(deviceKey, node);
+                default -> logger.warn("Unknown message type '{}' from device {}", type, deviceKey);
+            }
+        } catch (JsonProcessingException e) {
+            logger.warn("Ignoring malformed JSON from device {}: {}", deviceKey, e.getMessage());
+        } catch (Exception e) {
+            logger.error("Unexpected error handling message from device {}: {}", deviceKey, e.getMessage(), e);
         }
     }
 
@@ -70,11 +77,27 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         String event = node.path("event").asText();
 
         switch (event) {
-            case "dispensed" -> intakeService.markDispensed(node.path("intakeId").asLong());
-            case "intake_confirmed" -> intakeService.markTaken(node.path("intakeId").asLong());
+            case "dispensed" -> {
+                Long intakeId = requireIntakeId(deviceKey, node, event);
+                if (intakeId != null) intakeService.markDispensed(intakeId);
+            }
+            case "intake_confirmed" -> {
+                Long intakeId = requireIntakeId(deviceKey, node, event);
+                if (intakeId != null) intakeService.markTaken(intakeId);
+            }
             case "button_pressed" -> handleButtonPressed(deviceKey);
             default -> logger.warn("Unknown device event '{}' from device {}", event, deviceKey);
         }
+    }
+
+    /** Returns null (and logs) instead of letting a missing intakeId silently become 0 via asLong(). */
+    private Long requireIntakeId(String deviceKey, JsonNode node, String event) {
+        JsonNode intakeIdNode = node.path("intakeId");
+        if (intakeIdNode.isMissingNode() || !intakeIdNode.isIntegralNumber()) {
+            logger.warn("Ignoring '{}' event from device {}: missing or invalid intakeId", event, deviceKey);
+            return null;
+        }
+        return intakeIdNode.asLong();
     }
 
     /**
