@@ -53,20 +53,34 @@ class _HomeScreenState extends State<HomeScreen> {
       final medicines = results[0] as List<Medicine>;
       final intakes   = results[1] as List<Map<String, dynamic>>;
 
-      final takenTimings = intakes
-          .where((i) => i['status'] == 'TAKEN')
-          .map((i) => (i['timing'] as String).toUpperCase())
-          .toSet();
+      // One intake per timing window — last one wins if there's ever more than one.
+      final statusByTiming = <String, String>{};
+      for (final intake in intakes) {
+        final timing = (intake['timing'] as String?)?.toUpperCase();
+        final status = intake['status'] as String?;
+        if (timing != null && status != null) statusByTiming[timing] = status;
+      }
 
       if (!mounted) return;
       setState(() {
         _medicines.addAll(medicines.map((m) {
-          final inTaken = takenTimings.contains(m.timePeriod.name.toUpperCase());
-          return inTaken ? m.copyWith(status: MedicationStatus.taken) : m;
+          final mapped = _mapIntakeStatus(statusByTiming[m.timePeriod.name.toUpperCase()]);
+          return mapped != null ? m.copyWith(status: mapped) : m;
         }));
       });
     } catch (e) {
       AppLogger.error('Failed to load medicines', e, 'Home');
+    }
+  }
+
+  MedicationStatus? _mapIntakeStatus(String? intakeStatus) {
+    switch (intakeStatus) {
+      case 'TAKEN':      return MedicationStatus.taken;
+      case 'DISPENSING': return MedicationStatus.dispensing;
+      case 'DISPENSED':  return MedicationStatus.dispensed;
+      case 'MISSED':     return MedicationStatus.missed;
+      case 'INCOMPLETE': return MedicationStatus.incomplete;
+      default:           return null; // leave the medicine's own default (pending)
     }
   }
 
@@ -186,11 +200,18 @@ class _HomeScreenState extends State<HomeScreen> {
       try {
         final result = await _apiService.getNotification();
         if (result['status'] == 'OK') {
-          final message  = result['message']  as String;
-          final intakeId = result['intakeId'] as int?;
-          final timing   = result['timing']   as String?;
           if (!mounted) return false;
-          await _showReminderDialog(message, intakeId, timing);
+          final type = result['type'] as String?;
+          if (type == 'BUTTON_PRESSED') {
+            // Backend doesn't pick an intake for a button press — we do, same
+            // as we would for any other trigger.
+            await _handleButtonPressed();
+          } else {
+            final message  = result['message']  as String;
+            final intakeId = result['intakeId'] as int?;
+            final timing   = result['timing']   as String?;
+            await _showReminderDialog(message, intakeId, timing);
+          }
         }
       } catch (e) {
         AppLogger.warning('Notification poll failed, retrying: $e', 'Home');
@@ -198,6 +219,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
       return _polling && mounted;
     });
+  }
+
+  Future<void> _handleButtonPressed() async {
+    try {
+      final intakes = await _apiService.getTodayIntakes();
+      final pending = intakes.firstWhere(
+        (i) => i['status'] == 'PENDING',
+        orElse: () => const <String, dynamic>{},
+      );
+
+      if (pending.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Button pressed, but nothing is currently pending'),
+        ));
+        return;
+      }
+
+      final intakeId = (pending['id'] as num).toInt();
+      final timing = pending['timing'] as String?;
+      if (!mounted) return;
+      await _showReminderDialog(
+        'Physical button pressed on the pill box — confirm to dispense',
+        intakeId,
+        timing,
+      );
+    } catch (e) {
+      AppLogger.error('Failed to resolve intake for button press', e, 'Home');
+    }
   }
 
   Future<void> _showReminderDialog(String message, int? intakeId, String? timing) async {
@@ -294,43 +344,77 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Backend, not the app, decides when an intake actually becomes TAKEN — that
+  // only happens once the device's IR sensor confirms the compartment is
+  // empty. This just triggers the dispense and watches for that to happen.
   Future<void> _handleConfirmIntake(int? intakeId, String? timing) async {
+    if (intakeId == null) return;
+
     try {
-      if (intakeId != null) {
-        await _apiService.approveIntake(intakeId);
+      await _apiService.approveIntake(intakeId);
+      _setWindowStatus(timing, MedicationStatus.dispensing);
+
+      await _apiService.dispenseIntake(intakeId);
+
+      final finalStatus = await _pollIntakeUntilTaken(intakeId);
+
+      if (finalStatus == 'TAKEN') {
+        _setWindowStatus(timing, MedicationStatus.taken);
+        _showResultSnack('Pills dispensed — intake recorded', success: true);
+      } else {
+        // Still DISPENSED (or unknown) when we stopped watching — no timeout
+        // or failure state here by design. It'll show as taken once the IR
+        // sensor confirms, next time the list refreshes.
+        _setWindowStatus(timing, MedicationStatus.dispensed);
+        _showResultSnack('Dispensed — remove the medication to complete', success: true);
       }
-
-      final bool dispensed = await _apiService.dispenseFromDevice();
-
-      if (dispensed && intakeId != null) {
-        await _apiService.releaseIntake(intakeId);
-        setState(() {
-          for (int i = 0; i < _medicines.length; i++) {
-            final m = _medicines[i];
-            final inWindow = timing == null ||
-                m.timePeriod.name.toUpperCase() == timing.toUpperCase();
-            if (m.status == MedicationStatus.pending && inWindow) {
-              _medicines[i] = m.copyWith(status: MedicationStatus.taken);
-            }
-          }
-        });
-      }
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(dispensed
-            ? 'Pills dispensed — intake recorded'
-            : 'Device did not respond as expected'),
-        backgroundColor: dispensed ? Colors.green : Colors.orange,
-      ));
     } catch (e) {
+      _setWindowStatus(timing, MedicationStatus.pending);
       AppLogger.error('Intake action failed', e, 'Home');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error: $e'),
-        backgroundColor: Colors.red,
-      ));
+      _showResultSnack('Error: $e', success: false);
     }
+  }
+
+  void _setWindowStatus(String? timing, MedicationStatus status) {
+    if (!mounted) return;
+    setState(() {
+      for (int i = 0; i < _medicines.length; i++) {
+        final m = _medicines[i];
+        final inWindow = timing == null ||
+            m.timePeriod.name.toUpperCase() == timing.toUpperCase();
+        if (inWindow && m.status != MedicationStatus.taken) {
+          _medicines[i] = m.copyWith(status: status);
+        }
+      }
+    });
+  }
+
+  /// Polls every 3s for up to ~2 minutes, same interval as the notification
+  /// poll. Gives up silently rather than surfacing a timeout error — DISPENSED
+  /// with no confirmation yet is a valid, expected state, not a failure.
+  Future<String?> _pollIntakeUntilTaken(int intakeId) async {
+    const maxAttempts = 40;
+    String? lastStatus;
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      await Future.delayed(const Duration(seconds: 3));
+      if (!mounted) return lastStatus;
+      try {
+        final intake = await _apiService.getIntake(intakeId);
+        lastStatus = intake?['status'] as String?;
+        if (lastStatus == 'TAKEN') return lastStatus;
+      } catch (e) {
+        AppLogger.warning('Intake status poll failed, retrying: $e', 'Home');
+      }
+    }
+    return lastStatus;
+  }
+
+  void _showResultSnack(String message, {required bool success}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: success ? Colors.green : Colors.red,
+    ));
   }
 
   String _formatAmount(double amount) =>

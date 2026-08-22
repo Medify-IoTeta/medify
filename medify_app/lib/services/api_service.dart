@@ -28,7 +28,6 @@ Never _throwApiException(http.Response response) {
 class ApiService {
   static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
   //static const String baseUrl = 'http://192.168.7.15:8080'; // for android over WiFi (if not using adb reverse)
-  static const String embeddedBaseUrl = 'http://192.168.7.21'; // embedded url
 
   final AuthService _authService = AuthService();
 
@@ -153,12 +152,25 @@ class ApiService {
     throw Exception('Failed to approve intake: ${response.statusCode}');
   }
 
-  Future<Map<String, dynamic>> releaseIntake(int intakeId) async {
-    final url = Uri.parse('$baseUrl/api/intakes/$intakeId/released');
-    final response = await http.patch(url, headers: await _authHeaders());
-
+  /// Relays a dispense command to the patient's pill box via the backend's
+  /// WebSocket connection to the device. Throws ApiException with the
+  /// backend's real message on failure (e.g. device offline) so the caller
+  /// can show it directly instead of a generic error.
+  Future<Map<String, dynamic>> dispenseIntake(int intakeId) async {
+    final url = Uri.parse('$baseUrl/api/intakes/$intakeId/dispense');
+    final response = await http.post(url, headers: await _authHeaders());
     if (response.statusCode == 200) return jsonDecode(response.body);
-    throw Exception('Failed to release intake: ${response.statusCode}');
+    _throwApiException(response);
+  }
+
+  /// Single-intake lookup, for polling status after a dispense
+  /// (DISPENSING -> DISPENSED -> TAKEN, driven by the device's IR sensor).
+  Future<Map<String, dynamic>?> getIntake(int intakeId) async {
+    final url = Uri.parse('$baseUrl/api/intakes/$intakeId');
+    final response = await http.get(url, headers: await _authHeaders());
+    if (response.statusCode == 200) return jsonDecode(response.body);
+    if (response.statusCode == 404) return null;
+    throw Exception('Failed to get intake: ${response.statusCode}');
   }
 
   Future<Map<String, dynamic>> skipIntake(int intakeId) async {
@@ -323,23 +335,4 @@ class ApiService {
     }
   }
 
-  // ── Device ────────────────────────────────────────────────────
-
-  Future<bool> dispenseFromDevice() async {
-    final url = Uri.parse('$embeddedBaseUrl/move');
-    final response = await http.get(url).timeout(const Duration(seconds: 15));
-
-    if (response.statusCode == 200) {
-      final body = response.body.trim();
-      try {
-        final json = jsonDecode(body) as Map<String, dynamic>;
-        return json['status'] == 'OK';
-      } catch (_) {
-        // device returned plain text (e.g. "OK")
-        return body.toUpperCase() == 'OK';
-      }
-    }
-
-    throw Exception('Failed to dispense from device: ${response.statusCode}');
-  }
 }
