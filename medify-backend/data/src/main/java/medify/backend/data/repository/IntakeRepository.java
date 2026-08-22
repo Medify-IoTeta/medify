@@ -38,6 +38,11 @@ public class IntakeRepository implements IntakeRepositoryPort {
     }
 
     @Override
+    public List<Intake> findByStatusAndDispensedTimeBefore(IntakeStatus status, LocalDateTime cutoff) {
+        return jpaRepository.findByStatusAndDispensedTimeBefore(status, cutoff);
+    }
+
+    @Override
     public long countTakenSince(Long userId, IntakeStatus status, LocalDateTime since) {
         return jpaRepository.countTakenSince(userId, status, since);
     }

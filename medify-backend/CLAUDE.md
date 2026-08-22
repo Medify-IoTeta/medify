@@ -33,7 +33,7 @@ app → api → domain
 
 - One `Intake` record is created **per timing window** (not per medicine) when the scheduler fires
 - `NotificationPort.send(message, intakeId, timing)` — `timing` is the window name (MORNING/NOON/EVENING), always included so the frontend knows which window to confirm
-- Intake status flow: `PENDING → APPROVED → DISPENSING → DISPENSED → TAKEN`, or `MISSED` / `SKIPPED` / `POSTPONED`. `DISPENSED` means the motor released the pills but the IR sensor hasn't confirmed the compartment is empty yet — `TAKEN` is set **only** by that IR confirmation, never by a successful motor move alone. There is currently no failure/timeout status for a stuck `DISPENSED` intake — see "Device Communication" below.
+- Intake status flow: `PENDING → APPROVED → DISPENSING → DISPENSED → TAKEN`, or `MISSED` / `INCOMPLETE` / `SKIPPED` / `POSTPONED`. `DISPENSED` means the motor released the pills but the IR sensor hasn't confirmed the compartment is empty yet — `TAKEN` is set **only** by that IR confirmation, never by a successful motor move alone. `MISSED` is for an intake that never even started (still `PENDING`/`APPROVED`) when its window expired; `INCOMPLETE` is for one that *was* dispensed but never IR-confirmed within its own grace period — see "Missed / Incomplete Sweep" below. Both require caregiver attention and land in the same alerts feed, distinguished by `NotificationType`.
 
 ## Notification Flow
 
@@ -66,6 +66,14 @@ The pill box is never called directly by the app — it holds one persistent Web
 **Reliability, deliberately scoped:** the ack/retry above is transport-level only (did the command reach the device), not a business decision — retries never happen automatically after that point. `DeviceHeartbeatScheduler` sweeps every 30s and flips a device to `OFFLINE` if no heartbeat/message arrived in 90s. There is intentionally **no** jam-detection/`DISPENSE_FAILED` status and **no** timeout that moves a `DISPENSED` intake to `MISSED` or anything else — an intake can sit at `DISPENSED` indefinitely until the IR event arrives, by design (no reliable jam detection exists yet).
 
 **Physical button:** the pill box has a manual approval button as a second way to start the same intake flow, alongside the app. Pressing it sends `event: button_pressed` (no intakeId — the device never has one) over the same WS. The backend does **not** pick an intake, approve anything, or dispatch a dispense command in response — `DeviceWebSocketHandler.handleButtonPressed` only resolves the device's owning user and calls `NotificationPort.sendButtonPressed(userId)`, which queues a `PendingNotification` (drained by the app's existing `GET /api/notification` poll, now carrying an explicit `type` field so the app can distinguish `BUTTON_PRESSED` from `WINDOW_REMINDER` without relying on a null `intakeId` or message text) and logs a `NotificationType.BUTTON_PRESSED` row to `notifications_log` (`intake_id` null). The app remains the sole decision-maker: on receiving this, it resolves the relevant intake itself and runs the normal approve → `POST /dispense` flow.
+
+## Missed / Incomplete Sweep
+
+`MissedIntakeScheduler` (domain module, `@Scheduled(cron = "0 */5 * * * *")`) runs two independent checks every 5 minutes, judged on different clocks on purpose:
+- **MISSED** — intakes still `PENDING`/`APPROVED` once `windowEndTime` (1 hour after the intake was created — see `ReminderScheduler.sendReminder`) has passed.
+- **INCOMPLETE** — intakes still `DISPENSED` once `medify.intake.incomplete-grace-minutes` (default 30, `application.properties`, env-overridable via `INTAKE_INCOMPLETE_GRACE_MINUTES`) has elapsed since `dispensedTime` (stamped in `IntakeService.markDispensed`) — **not** `windowEndTime`, so a late approval doesn't shrink the IR-confirmation window. This constant is the single place that value lives today; it's expected to become a per-user app setting later, which is why it's already externalized as config rather than inlined in the scheduler.
+
+Both write a `NotificationLog` per subscribed caregiver (`MISSED_INTAKE` / `INCOMPLETE_INTAKE`) — same delivery mechanism, distinguishable by `type`. Neither goes through `IntakeService`; the scheduler mutates the `Intake` entity directly, same as the pre-existing MISSED path did.
 
 ## Auth
 

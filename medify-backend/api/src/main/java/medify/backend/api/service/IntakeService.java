@@ -86,6 +86,7 @@ public class IntakeService {
             return intake;
         }
         intake.setStatus(IntakeStatus.DISPENSED);
+        intake.setDispensedTime(LocalDateTime.now());
         return intakeRepository.save(intake);
     }
 

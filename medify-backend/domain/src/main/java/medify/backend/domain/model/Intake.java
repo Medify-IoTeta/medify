@@ -36,6 +36,9 @@ public class Intake {
     @Column(name = "approved_time")
     private LocalDateTime approvedTime;
 
+    @Column(name = "dispensed_time")
+    private LocalDateTime dispensedTime;
+
     @Column(name = "released_time")
     private LocalDateTime releasedTime;
 
