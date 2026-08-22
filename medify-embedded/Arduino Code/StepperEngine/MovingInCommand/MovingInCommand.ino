@@ -1,6 +1,6 @@
 // Requires two extra libraries (Arduino IDE Library Manager):
-//   - "ArduinoWebsockets" by Gil Maimon   (device -> backend WebSocket client)
-//   - "ArduinoJson" by Benoit Blanchon    (v6 API used below)
+//   - "WebSockets" by Markus Sattler / Links2004   (device -> backend WebSocket client)
+//   - "ArduinoJson" by Benoit Blanchon              (v6 API used below)
 //
 // The device no longer runs an HTTP server. It dials OUT to the backend and
 // keeps that connection open, so it works from any network the backend is
@@ -13,11 +13,9 @@
 // Only the communication layer (WiFiServer -> WebSocket client) is new.
 
 #include <WiFiNINA.h>
-#include <ArduinoWebsockets.h>
+#include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include <string.h>
-
-using namespace websockets;
 
 // ── Motor pins ──────────────────────────────────────────────────
 #define IN1 6
@@ -62,15 +60,11 @@ const uint16_t BACKEND_PORT = 8080;
 const char* DEVICE_ID = "pillbox-01";
 const char* DEVICE_TOKEN = "medify-dev-secret-001";
 
-WebsocketsClient wsClient;
+WebSocketsClient webSocket;
 bool wsConnected = false;
 
 unsigned long lastHeartbeatMs = 0;
 const unsigned long HEARTBEAT_INTERVAL_MS = 20000;
-
-unsigned long lastReconnectAttemptMs = 0;
-unsigned long reconnectBackoffMs = 2000;
-const unsigned long MAX_RECONNECT_BACKOFF_MS = 30000;
 
 // ── Intake-watch state ──────────────────────────────────────────
 // After a dispense, loop() polls the IR sensor until it confirms the
@@ -103,12 +97,10 @@ void loop() {
     connectWiFi();
   }
 
-  if (wsConnected && wsClient.available()) {
-    wsClient.poll();
+  webSocket.loop(); // also drives automatic reconnect (see setReconnectInterval below)
+
+  if (wsConnected) {
     sendHeartbeatIfDue();
-  } else {
-    wsConnected = false;
-    maybeReconnectWebSocket();
   }
 
   if (watchingIntake) {
@@ -132,34 +124,17 @@ void connectWiFi() {
 }
 
 void connectWebSocket() {
-  wsClient.onMessage(onWsMessage);
-  wsClient.onEvent(onWsEvent);
+  String path = String("/ws/device?deviceId=") + DEVICE_ID + "&token=" + DEVICE_TOKEN;
 
-  String url = String("ws://") + BACKEND_HOST + ":" + BACKEND_PORT +
-               "/ws/device?deviceId=" + DEVICE_ID + "&token=" + DEVICE_TOKEN;
+  Serial.print("Connecting to backend: ws://");
+  Serial.print(BACKEND_HOST);
+  Serial.print(":");
+  Serial.print(BACKEND_PORT);
+  Serial.println(path);
 
-  Serial.print("Connecting to backend: ");
-  Serial.println(url);
-
-  wsConnected = wsClient.connect(url);
-  lastReconnectAttemptMs = millis();
-
-  if (wsConnected) {
-    Serial.println("WebSocket connected");
-    reconnectBackoffMs = 2000;
-  } else {
-    Serial.println("WebSocket connect failed, will retry");
-  }
-}
-
-void maybeReconnectWebSocket() {
-  unsigned long now = millis();
-  if (now - lastReconnectAttemptMs < reconnectBackoffMs) return;
-
-  connectWebSocket();
-  if (!wsConnected) {
-    reconnectBackoffMs = min(reconnectBackoffMs * 2, MAX_RECONNECT_BACKOFF_MS);
-  }
+  webSocket.begin(BACKEND_HOST, BACKEND_PORT, path.c_str());
+  webSocket.onEvent(onWsEvent);
+  webSocket.setReconnectInterval(5000); // library handles retry/backoff internally from here on
 }
 
 void sendHeartbeatIfDue() {
@@ -173,24 +148,36 @@ void sendHeartbeatIfDue() {
   sendJson(doc);
 }
 
-void onWsEvent(WebsocketsEvent event, String data) {
-  if (event == WebsocketsEvent::ConnectionOpened) {
-    Serial.println("WS event: connection opened");
-  } else if (event == WebsocketsEvent::ConnectionClosed) {
-    Serial.println("WS event: connection closed");
-    wsConnected = false;
-  }
-}
-
-// ── Incoming commands from the backend ──────────────────────────
+// ── Incoming messages from the backend ──────────────────────────
 // The ONLY place that calls performDispense() — whether the backend sent this
 // because the app approved something, or because it relayed a button press
 // back into an app-driven approve+dispense call, the device doesn't know or
 // care. It just does what the backend tells it, exactly once, here.
 
-void onWsMessage(WebsocketsMessage message) {
+void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
+  switch (type) {
+    case WStype_CONNECTED:
+      wsConnected = true;
+      Serial.println("WebSocket connected");
+      break;
+
+    case WStype_DISCONNECTED:
+      wsConnected = false;
+      Serial.println("WebSocket disconnected");
+      break;
+
+    case WStype_TEXT:
+      handleWsMessage(payload, length);
+      break;
+
+    default:
+      break; // WStype_PING/PONG/ERROR/etc. — nothing to do
+  }
+}
+
+void handleWsMessage(uint8_t* payload, size_t length) {
   StaticJsonDocument<256> doc;
-  DeserializationError err = deserializeJson(doc, message.data());
+  DeserializationError err = deserializeJson(doc, payload, length);
   if (err) {
     Serial.print("Bad JSON from backend: ");
     Serial.println(err.c_str());
@@ -294,7 +281,7 @@ void sendIntakeConfirmedEvent(long intakeId) {
 void sendJson(JsonDocument& doc) {
   String payload;
   serializeJson(doc, payload);
-  wsClient.send(payload);
+  webSocket.sendTXT(payload);
 }
 
 // ── Motor control (unchanged from test_FullCycle.ino / the original sketch) ──
