@@ -245,7 +245,14 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      final intakeId = (pending['id'] as num).toInt();
+      final rawId = pending['id'];
+      final intakeId = rawId is num ? rawId.toInt() : int.tryParse('$rawId');
+      if (intakeId == null) {
+        AppLogger.error('Button-pressed intake has no usable id: $pending', null, 'Home');
+        _showResultSnack('Button pressed, but the pending intake could not be read', success: false);
+        return;
+      }
+
       final timing = pending['timing'] as String?;
       if (!mounted) return;
       await _showReminderDialog(
@@ -255,6 +262,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } catch (e) {
       AppLogger.error('Failed to resolve intake for button press', e, 'Home');
+      _showResultSnack('Button pressed, but something went wrong: $e', success: false);
     }
   }
 
