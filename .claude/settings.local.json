@@ -4,7 +4,15 @@
       "Bash(python -c ' *)",
       "Bash(docker compose *)",
       "Bash(docker image *)",
-      "Bash(docker system *)"
+      "Bash(docker system *)",
+      "Bash(git status *)",
+      "Bash(git check-ignore *)",
+      "Bash(docker-compose up *)",
+      "Bash(flutter analyze *)",
+      "Bash(docker exec *)",
+      "Bash(git add *)",
+      "Bash(git stash *)",
+      "Bash(git pull *)"
     ]
   }
 }

@@ -47,14 +47,15 @@ char pass[] = "0523774443";
 
 // ── Backend / device identity ──────────────────────────────────
 // Must match a row in the backend's `devices` table (see
-// medify-backend V15__create_devices_table.sql for the seeded dev device).
+// medify-backend V16__create_devices_table.sql for the seeded dev device).
 // deviceId/token are provisioned once per physical unit — do not commit a
 // real device's token to a shared repo.
-// Derived from medify_app/lib/services/api_service.dart's commented-out
-// "for android over WiFi" baseUrl (192.168.7.15) — the app's `adb reverse`
+// BACKEND_HOST is the dev machine's current LAN IPv4 (check with `ipconfig`
+// on Windows / `ifconfig`/`ip addr` on Mac/Linux) — the app's `adb reverse`
 // localhost value doesn't apply here since the box isn't USB-tethered.
-// This is a LAN IP, not a public host, and it drifts with the dev network —
-// keep it in sync manually until there's a stable, publicly reachable host.
+// This is a LAN IP, not a public host, and it drifts with the dev network
+// (DHCP re-lease, switching networks, etc.) — keep it in sync manually
+// until there's a stable, publicly reachable host.
 const char* BACKEND_HOST = "192.168.7.23";
 const uint16_t BACKEND_PORT = 8080;
 const char* DEVICE_ID = "pillbox-01";
