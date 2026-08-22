@@ -232,8 +232,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleButtonPressed() async {
     try {
       final intakes = await _apiService.getTodayIntakes();
+      // Match PENDING and APPROVED: the UI shows both as "pending" (see
+      // _mapIntakeStatus — neither status is mapped, so the medicine card
+      // just keeps its default pending look), e.g. when approve() succeeded
+      // but a prior dispense attempt failed and reverted the local badge.
+      // The button should still be able to act on either.
       final pending = intakes.firstWhere(
-        (i) => i['status'] == 'PENDING',
+        (i) => i['status'] == 'PENDING' || i['status'] == 'APPROVED',
         orElse: () => const <String, dynamic>{},
       );
 
