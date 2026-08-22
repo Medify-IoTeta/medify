@@ -16,6 +16,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 @Component
 public class NotificationAdapter implements NotificationPort {
@@ -23,7 +25,7 @@ public class NotificationAdapter implements NotificationPort {
 
     public record PendingNotification(String message, Long intakeId, String timing, NotificationType type) {}
 
-    private static volatile PendingNotification pending = null;
+    private static final Queue<PendingNotification> pending = new ConcurrentLinkedQueue<>();
 
     private final NotificationLogRepositoryPort notificationLogRepository;
     private final UserRepositoryPort userRepository;
@@ -39,7 +41,7 @@ public class NotificationAdapter implements NotificationPort {
 
     @Override
     public void send(String message, Long intakeId, String timing) {
-        pending = new PendingNotification(message, intakeId, timing, NotificationType.WINDOW_REMINDER);
+        pending.add(new PendingNotification(message, intakeId, timing, NotificationType.WINDOW_REMINDER));
         logger.info("Notification queued: {} (intakeId={}, timing={})", message, intakeId, timing);
 
         userRepository.findFirstByType(UserType.PATIENT).ifPresent(patient -> {
@@ -55,7 +57,7 @@ public class NotificationAdapter implements NotificationPort {
     @Override
     public void sendButtonPressed(Long userId) {
         String message = "Physical button pressed on the pill box";
-        pending = new PendingNotification(message, null, null, NotificationType.BUTTON_PRESSED);
+        pending.add(new PendingNotification(message, null, null, NotificationType.BUTTON_PRESSED));
         logger.info("Button-pressed notification queued for user {}", userId);
 
         NotificationLog log = new NotificationLog(null, userId, null, NotificationType.BUTTON_PRESSED, message, LocalDateTime.now(), "SENT");
@@ -88,8 +90,6 @@ public class NotificationAdapter implements NotificationPort {
     }
 
     public static PendingNotification drain() {
-        PendingNotification p = pending;
-        pending = null;
-        return p;
+        return pending.poll();
     }
 }
