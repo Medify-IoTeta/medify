@@ -90,7 +90,10 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
                 Long intakeId = requireIntakeId(deviceKey, node, event);
                 if (intakeId != null) intakeService.markTaken(intakeId);
             }
-            case "button_pressed" -> handleButtonPressed(deviceKey);
+            case "button_pressed" -> {
+                logger.info("[BUTTON_FLOW] button_pressed event received from device {}", deviceKey);
+                handleButtonPressed(deviceKey);
+            }
             default -> logger.warn("Unknown device event '{}' from device {}", event, deviceKey);
         }
     }
@@ -115,11 +118,17 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     private void handleButtonPressed(String deviceKey) {
         deviceRepository.findByDeviceKey(deviceKey).ifPresentOrElse(
                 device -> {
+                    logger.info("[BUTTON_FLOW] device resolved: deviceKey={}, deviceId={}, userId={}",
+                            deviceKey, device.getId(), device.getUserId());
                     IntakeActionResult result = intakeOrchestrationService.requestIntakeNow(device.getUserId(), null);
-                    logger.info("Button press on device {} -> {}", deviceKey, result.outcome());
+                    logger.info("[BUTTON_FLOW] requestIntakeNow result: outcome={}, intakeId={}, blockingIntakeId={}, message=\"{}\"",
+                            result.outcome(),
+                            result.intake() != null ? result.intake().getId() : null,
+                            result.blockingIntake() != null ? result.blockingIntake().getId() : null,
+                            result.message());
                     notificationPort.sendButtonPressed(device.getUserId(), result);
                 },
-                () -> logger.warn("button_pressed from unregistered device {}", deviceKey)
+                () -> logger.warn("[BUTTON_FLOW] button_pressed from unregistered device {}", deviceKey)
         );
     }
 

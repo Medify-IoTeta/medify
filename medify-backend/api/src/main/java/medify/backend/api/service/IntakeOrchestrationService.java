@@ -87,20 +87,27 @@ public class IntakeOrchestrationService {
      * end; tryTransition is what makes even a lock-bypassing race safe.
      */
     private IntakeActionResult doRequestIntakeNow(Long userId, Long explicitIntakeId) {
+        logger.info("[BUTTON_FLOW] requestIntakeNow entered: userId={}, explicitIntakeId={}", userId, explicitIntakeId);
         List<Intake> unresolved = intakeRepository.findUnresolvedOrderByScheduledTimeAsc(userId, IntakeStatus.UNRESOLVED);
+        logger.info("[BUTTON_FLOW] unresolved intakes for user {}: count={}, ids={}",
+                userId, unresolved.size(), unresolved.stream().map(Intake::getId).toList());
 
         if (unresolved.isEmpty()) {
             if (explicitIntakeId != null) {
                 Intake target = intakeRepository.findById(explicitIntakeId).orElse(null);
                 if (target != null) {
+                    logger.info("[BUTTON_FLOW] no unresolved intakes; explicit target {} already resolved -> ALREADY_RESOLVED", explicitIntakeId);
                     return IntakeActionResult.alreadyResolved(target, "This dose has already been resolved.");
                 }
             }
+            logger.info("[BUTTON_FLOW] no unresolved intakes exist for user {} -> NOTHING_AVAILABLE (no PENDING/MISSED/POSTPONED/etc. intake to act on)", userId);
             return IntakeActionResult.nothingAvailable("Nothing is currently available to take.");
         }
 
         Intake earliest = unresolved.get(0);
         Intake target = earliest;
+        logger.info("[BUTTON_FLOW] earliest unresolved intake selected: id={}, status={}, scheduledTime={}, windowEndTime={}",
+                earliest.getId(), earliest.getStatus(), earliest.getScheduledTime(), earliest.getWindowEndTime());
 
         if (explicitIntakeId != null) {
             Intake requested = intakeRepository.findById(explicitIntakeId).orElse(null);
@@ -121,6 +128,8 @@ public class IntakeOrchestrationService {
 
         // target == earliest at this point either way.
         if (!IntakeStatus.STARTABLE.contains(target.getStatus())) {
+            logger.info("[BUTTON_FLOW] intake {} status {} is not STARTABLE -> blocked (no dispatch attempted)",
+                    target.getId(), target.getStatus());
             return switch (target.getStatus()) {
                 case DISPENSING -> IntakeActionResult.alreadyInProgress(target, "The previous dose is currently being dispensed.");
                 case DISPENSED -> IntakeActionResult.awaitingRemoval(target,
@@ -133,28 +142,35 @@ public class IntakeOrchestrationService {
 
         Optional<Device> deviceOpt = deviceRepository.findByUserId(userId);
         if (deviceOpt.isEmpty()) {
+            logger.warn("[BUTTON_FLOW] no device registered for user {} -> NO_DEVICE (no dispatch attempted)", userId);
             return IntakeActionResult.noDevice("No pill box registered for this patient.");
         }
         Device device = deviceOpt.get();
+        logger.info("[BUTTON_FLOW] device for user {}: deviceKey={}", userId, device.getDeviceKey());
 
         IntakeStatus priorStatus = target.getStatus();
         boolean claimed = intakeRepository.tryTransition(target.getId(), IntakeStatus.STARTABLE, IntakeStatus.DISPENSING);
+        logger.info("[BUTTON_FLOW] claim intake {} ({} -> DISPENSING): {}",
+                target.getId(), priorStatus, claimed ? "SUCCEEDED" : "FAILED (lost race)");
         if (!claimed) {
             // Lost a race (shouldn't normally happen given the per-user lock, but the atomic
             // conditional update is the real safety net) — re-read and report the current truth
             // rather than attempting a second dispense.
             Intake fresh = intakeRepository.findById(target.getId()).orElse(target);
-            logger.info("Intake {} claim lost the race — current status {}", target.getId(), fresh.getStatus());
+            logger.info("[BUTTON_FLOW] intake {} claim lost the race — current status {}", target.getId(), fresh.getStatus());
             return IntakeActionResult.alreadyInProgress(fresh, "This dose is already being handled.");
         }
 
         reminderScheduler.cancelPostponeReminder(target.getId());
 
+        logger.info("[BUTTON_FLOW] dispatching command:dispense to device {} for intake {}", device.getDeviceKey(), target.getId());
         DeviceConnectionPort.DispatchOutcome outcome = deviceConnectionPort.dispatchDispense(device.getDeviceKey(), target.getId());
+        logger.info("[BUTTON_FLOW] dispatchDispense outcome for intake {}: {}", target.getId(), outcome);
         if (outcome != DeviceConnectionPort.DispatchOutcome.ACKED) {
             // Revert the claim — the device never actually took the command, so the intake must not
             // be left looking like it's dispensing.
             intakeRepository.tryTransition(target.getId(), List.of(IntakeStatus.DISPENSING), priorStatus);
+            logger.warn("[BUTTON_FLOW] dispatch not ACKED ({}) -> reverted intake {} back to {}", outcome, target.getId(), priorStatus);
             if (outcome == DeviceConnectionPort.DispatchOutcome.ACK_TIMEOUT) {
                 return IntakeActionResult.deviceAckTimeout(target, "Pill box didn't respond in time — try again.");
             }
@@ -167,7 +183,7 @@ public class IntakeOrchestrationService {
             target.setApprovedTime(LocalDateTime.now());
         }
         Intake saved = intakeRepository.save(target);
-        logger.info("Intake {} claimed and dispensing (was {})", saved.getId(), priorStatus);
+        logger.info("[BUTTON_FLOW] intake {} claimed and dispensing (was {}) — STARTED", saved.getId(), priorStatus);
         return IntakeActionResult.started(saved);
     }
 

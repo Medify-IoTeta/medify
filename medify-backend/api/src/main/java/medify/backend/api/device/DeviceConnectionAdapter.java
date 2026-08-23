@@ -45,7 +45,10 @@ public class DeviceConnectionAdapter implements DeviceConnectionPort {
     public void completeAck(String commandId) {
         CompletableFuture<Void> future = pendingAcks.remove(commandId);
         if (future != null) {
+            logger.info("[BUTTON_FLOW] completeAck: commandId={} matched a pending dispatch -> completing", commandId);
             future.complete(null);
+        } else {
+            logger.warn("[BUTTON_FLOW] completeAck: commandId={} has no pending dispatch (already timed out, or unknown)", commandId);
         }
     }
 
@@ -53,6 +56,7 @@ public class DeviceConnectionAdapter implements DeviceConnectionPort {
     public DispatchOutcome dispatchDispense(String deviceKey, Long intakeId) {
         WebSocketSession session = sessions.get(deviceKey);
         if (session == null || !session.isOpen()) {
+            logger.warn("[BUTTON_FLOW] dispatchDispense: no open session for device {} -> OFFLINE", deviceKey);
             return DispatchOutcome.OFFLINE;
         }
 
@@ -67,16 +71,20 @@ public class DeviceConnectionAdapter implements DeviceConnectionPort {
                     "intakeId", intakeId
             ));
             session.sendMessage(new TextMessage(payload));
+            logger.info("[BUTTON_FLOW] command:dispense sent on WS to device {} (commandId={}, intakeId={}) — waiting up to {}s for ack",
+                    deviceKey, commandId, intakeId, ACK_TIMEOUT_SECONDS);
             ackFuture.get(ACK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            logger.info("[BUTTON_FLOW] ack confirmed for commandId={} -> ACKED", commandId);
             return DispatchOutcome.ACKED;
         } catch (TimeoutException e) {
+            logger.warn("[BUTTON_FLOW] no ack within {}s for commandId={} (device {}) -> ACK_TIMEOUT", ACK_TIMEOUT_SECONDS, commandId, deviceKey);
             return DispatchOutcome.ACK_TIMEOUT;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.warn("Failed to dispatch dispense command to device {}: {}", deviceKey, e.getMessage());
             return DispatchOutcome.OFFLINE;
         } catch (IOException | ExecutionException e) {
-            logger.warn("Failed to dispatch dispense command to device {}: {}", deviceKey, e.getMessage());
+            logger.warn("[BUTTON_FLOW] failed to send command:dispense to device {}: {}", deviceKey, e.getMessage());
             return DispatchOutcome.OFFLINE;
         } finally {
             pendingAcks.remove(commandId);

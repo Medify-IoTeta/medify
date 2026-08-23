@@ -63,6 +63,9 @@ const char* DEVICE_TOKEN = "medify-dev-secret-001";
 
 WebSocketsClient webSocket;
 bool wsConnected = false;
+bool wsClientStarted = false;         // has connectWebSocket() ever been called (WiFi reached WL_CONNECTED at least once)
+unsigned long lastWifiAttemptMs = 0;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;
 
 unsigned long lastHeartbeatMs = 0;
 const unsigned long HEARTBEAT_INTERVAL_MS = 20000;
@@ -115,17 +118,23 @@ void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   Serial.begin(9600);
 
-  connectWiFi();
-  connectWebSocket();
+  // Deliberately does NOT block here waiting for WiFi — pollButton() must start working from the
+  // very first loop() iteration regardless of network state. The first connection attempt happens
+  // on the first loop() tick via maybeConnectWiFi(), the same non-blocking path used for every
+  // reconnect after that.
 }
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     wsConnected = false;
-    connectWiFi();
+    maybeConnectWiFi(); // rate-limited single attempt — never blocks loop() for long, unlike the old while(){delay(5000);} retry
+  } else {
+    if (!wsClientStarted) {
+      connectWebSocket(); // WiFi is up and this hasn't run yet — start the WS client exactly once
+      wsClientStarted = true;
+    }
+    webSocket.loop(); // also drives automatic reconnect (see setReconnectInterval below)
   }
-
-  webSocket.loop(); // also drives automatic reconnect (see setReconnectInterval below)
 
   if (wsConnected) {
     sendHeartbeatIfDue();
@@ -135,20 +144,34 @@ void loop() {
     pollIrSensor();
   }
 
-  pollButton();
+  pollButton(); // must run every iteration — a physical press has to be detectable locally no matter what state WiFi/WebSocket are in
 }
 
 // ── Wi-Fi / WebSocket connection management ─────────────────────
+// Non-blocking on purpose. The previous connectWiFi() was `while (not connected) { WiFi.begin();
+// delay(5000); }`, called both in setup() and again in loop() whenever WiFi dropped — if the
+// network was ever unreachable (out of range, wrong SSID/password, router down), that while loop
+// never returned, so loop() — and therefore pollButton() — never ran at all. That's why a real
+// press produced zero Serial output: the button-polling code was simply never being reached.
+// (wsClientStarted/lastWifiAttemptMs/WIFI_RETRY_INTERVAL_MS are declared near the top of the file,
+// alongside wsConnected, since they're read from loop() before this point in the file — plain
+// globals need top-to-bottom declaration order; only functions get auto-forward-declared.)
 
-void connectWiFi() {
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print("Connecting to WiFi: ");
-    Serial.println(ssid);
-    WiFi.begin(ssid, pass);
-    delay(5000);
+void maybeConnectWiFi() {
+  unsigned long now = millis();
+  if (now - lastWifiAttemptMs < WIFI_RETRY_INTERVAL_MS) return; // rate limit only — no delay()/blocking wait
+  lastWifiAttemptMs = now;
+
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, pass); // one attempt; if it fails, loop() keeps running and this retries in ~5s
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi connected, IP: ");
+    Serial.println(WiFi.localIP());
+    // WS client startup happens in loop() itself (not here) so it's triggered on any iteration
+    // where WiFi turns out to be connected, not only immediately after a WiFi.begin() call returns.
   }
-  Serial.print("WiFi connected, IP: ");
-  Serial.println(WiFi.localIP());
 }
 
 void connectWebSocket() {
@@ -177,10 +200,11 @@ void sendHeartbeatIfDue() {
 }
 
 // ── Incoming messages from the backend ──────────────────────────
-// The ONLY place that calls performDispense() — whether the backend sent this
-// because the app approved something, or because it relayed a button press
-// back into an app-driven approve+dispense call, the device doesn't know or
-// care. It just does what the backend tells it, exactly once, here.
+// The ONLY place that calls performDispense() — the backend alone decides whether/when to
+// dispense (see IntakeOrchestrationService server-side), whether that decision was triggered by
+// the app's Take Now or by this device's own button_pressed event below. The device never picks
+// an intake and never calls performDispense() on its own initiative; it only executes exactly the
+// command:dispense messages the backend sends, here.
 
 void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
@@ -273,16 +297,25 @@ void pollIrSensor() {
 }
 
 // ── Physical button ───────────────────────────────────────────────
-// Purely a notification to the backend/app — this NEVER calls performDispense()
-// directly. The app decides which intake is relevant and drives the normal
-// approve -> dispense flow, which comes back to this device as an ordinary
-// command:dispense message, same as if the app had been tapped instead.
-
+// Purely a notification to the backend — this NEVER calls performDispense() directly and never
+// decides which intake is eligible. The backend (IntakeOrchestrationService.requestIntakeNow)
+// makes that decision entirely server-side and, if a dose is eligible, sends this device a normal
+// command:dispense message — the exact same message it would send for an app-initiated dispense.
+// The mobile app is NOT involved in and NOT required for this flow.
+//
+// Debounce/cooldown state machine is unchanged from before this fix (it was not the bug — see the
+// Wi-Fi/WebSocket section above for the actual root cause). What's new here is Serial visibility
+// into each stage, requested for bench testing:
+//   raw edge          -> every physical transition of the pin, before debounce
+//   accepted/ignored   -> the debounced, confirmed press, and why it was or wasn't acted on
+//   WebSocket status   -> whether the resulting event actually got sent
 void pollButton() {
   int rawState = digitalRead(BUTTON_PIN);
   unsigned long now = millis();
 
   if (rawState != buttonLastRawState) {
+    Serial.println(rawState == LOW ? "BUTTON: raw edge -> LOW (physical press detected)"
+                                    : "BUTTON: raw edge -> HIGH (physical release detected)");
     buttonLastRawState = rawState;
     buttonLastChangeMs = now;
   }
@@ -294,7 +327,7 @@ void pollButton() {
   buttonStableState = buttonLastRawState;
 
   if (buttonStableState == LOW) { // confirmed press (INPUT_PULLUP: LOW = pressed)
-    Serial.println("BUTTON: PRESSED");
+    Serial.println("BUTTON: PRESSED (accepted after debounce)");
     if (buttonEventArmed) {
       buttonEventArmed = false; // re-arms only on a confirmed release, below
       maybeSendButtonPressedEvent();
@@ -307,8 +340,11 @@ void pollButton() {
 
 void maybeSendButtonPressedEvent() {
   unsigned long now = millis();
-  if (now - lastButtonSentMs < BUTTON_PRESS_COOLDOWN_MS) {
-    Serial.println("BUTTON_PRESSED IGNORED (cooldown)");
+  unsigned long sinceLast = now - lastButtonSentMs;
+  if (sinceLast < BUTTON_PRESS_COOLDOWN_MS) {
+    Serial.print("BUTTON: press ignored — cooldown active, ");
+    Serial.print(BUTTON_PRESS_COOLDOWN_MS - sinceLast);
+    Serial.println("ms remaining");
     return;
   }
   lastButtonSentMs = now;
@@ -316,7 +352,10 @@ void maybeSendButtonPressedEvent() {
 }
 
 void sendButtonPressedEvent() {
-  if (!wsConnected) return; // nothing to relay to if we're not connected
+  if (!wsConnected) {
+    Serial.println("BUTTON: press accepted but NOT sent — WebSocket disconnected");
+    return;
+  }
 
   StaticJsonDocument<96> doc;
   doc["type"] = "event";
