@@ -149,7 +149,20 @@ public class IntakeOrchestrationService {
         logger.info("[BUTTON_FLOW] device for user {}: deviceKey={}", userId, device.getDeviceKey());
 
         IntakeStatus priorStatus = target.getStatus();
-        boolean claimed = intakeRepository.tryTransition(target.getId(), IntakeStatus.STARTABLE, IntakeStatus.DISPENSING);
+        logger.info("[BUTTON_FLOW] about to claim intake {} ({} -> DISPENSING) via tryTransition", target.getId(), priorStatus);
+        boolean claimed;
+        try {
+            claimed = intakeRepository.tryTransition(target.getId(), IntakeStatus.STARTABLE, IntakeStatus.DISPENSING);
+        } catch (RuntimeException e) {
+            // Temporary diagnostic wrapper: tryTransition threw before returning, so the flow would
+            // otherwise stop silently here from a [BUTTON_FLOW]-only log view — the underlying
+            // exception was still being logged by DeviceWebSocketHandler's catch-all, just without
+            // this prefix. Logging and rethrowing here makes it visible under the same filter, then
+            // preserves existing error handling upstream.
+            logger.error("[BUTTON_FLOW] tryTransition threw for intake {} — claim did not complete: {}",
+                    target.getId(), e.toString(), e);
+            throw e;
+        }
         logger.info("[BUTTON_FLOW] claim intake {} ({} -> DISPENSING): {}",
                 target.getId(), priorStatus, claimed ? "SUCCEEDED" : "FAILED (lost race)");
         if (!claimed) {

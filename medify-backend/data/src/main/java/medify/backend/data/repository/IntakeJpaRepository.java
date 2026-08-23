@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -38,6 +39,17 @@ public interface IntakeJpaRepository extends JpaRepository<Intake, Long> {
 
     List<Intake> findByUserIdAndStatusInOrderByScheduledTimeAsc(Long userId, Collection<IntakeStatus> statuses);
 
+    /**
+     * @Modifying (bulk UPDATE/DELETE) queries require an active read-write transaction to execute
+     * at all — unlike save()/findById()/etc., which SimpleJpaRepository already wraps in its own
+     * transaction, a custom @Query method on the repository interface gets none by default. Without
+     * this @Transactional, calling this method throws TransactionRequiredException immediately
+     * (never executes the UPDATE) — which is exactly what was silently breaking the physical-button
+     * and take-now claim step. Deliberately scoped to just this one call, not the calling service
+     * method, so it stays a short-lived transaction and never spans the WebSocket ACK wait in
+     * IntakeOrchestrationService.
+     */
+    @Transactional
     @Modifying
     @Query("UPDATE Intake i SET i.status = :newStatus WHERE i.id = :id AND i.status IN :allowedFrom")
     int atomicUpdateStatus(
