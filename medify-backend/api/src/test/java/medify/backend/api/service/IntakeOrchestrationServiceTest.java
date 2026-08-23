@@ -210,4 +210,63 @@ class IntakeOrchestrationServiceTest {
 
         assertEquals(IntakeActionResult.Outcome.ALREADY_RESOLVED, result.outcome());
     }
+
+    // ── ACK_TIMEOUT must be treated as uncertain delivery, never a known failure ──────────────
+    // (regression coverage for the physical-button self-blocking bug: the device could ack and
+    // physically dispense while the backend's own wait timed out first — reverting in that case
+    // let the very next press re-select and re-dispense the same intake)
+
+    @Test
+    void ackTimeoutLeavesIntakeAtDispensingInsteadOfRevertingToAvoidDuplicateDispense() {
+        Intake pending = intake(1L, IntakeStatus.PENDING, LocalDateTime.now());
+        when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(eq(USER_ID), any())).thenReturn(List.of(pending));
+        Device device = new Device();
+        device.setId(99L);
+        device.setDeviceKey("pillbox-01");
+        when(deviceRepository.findByUserId(USER_ID)).thenReturn(Optional.of(device));
+        when(intakeRepository.tryTransition(eq(1L), anyCollection(), eq(IntakeStatus.DISPENSING))).thenReturn(true);
+        when(deviceConnectionPort.dispatchDispense(eq("pillbox-01"), anyLong()))
+                .thenReturn(DeviceConnectionPort.DispatchOutcome.ACK_TIMEOUT);
+        when(intakeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        IntakeActionResult result = service.requestIntakeNow(USER_ID, null);
+
+        assertEquals(IntakeActionResult.Outcome.DEVICE_ACK_TIMEOUT, result.outcome());
+        assertEquals(IntakeStatus.DISPENSING, result.intake().getStatus(),
+                "must stay DISPENSING, not revert — delivery is uncertain, not known-failed");
+        // Exactly one tryTransition call total (the initial claim). No second call attempting to
+        // revert back to PENDING — a revert there is precisely what would let a second press
+        // re-select and re-dispense this same intake.
+        verify(intakeRepository, times(1)).tryTransition(any(), any(), any());
+    }
+
+    @Test
+    void secondPhysicalPressCannotDispenseAgainAfterAckTimeoutLeftIntakeDispensing() {
+        // Simulates the very next button press finding the intake exactly where the fix above
+        // leaves it after an uncertain ack.
+        Intake dispensing = intake(1L, IntakeStatus.DISPENSING, LocalDateTime.now());
+        when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(eq(USER_ID), any())).thenReturn(List.of(dispensing));
+
+        IntakeActionResult result = service.requestIntakeNow(USER_ID, null);
+
+        assertEquals(IntakeActionResult.Outcome.ALREADY_IN_PROGRESS, result.outcome());
+        verifyNoInteractions(deviceConnectionPort);
+    }
+
+    @Test
+    void explicitAppTakeNowBlockedByEarlierDispensedIntake() {
+        Intake dispensedA = intake(1L, IntakeStatus.DISPENSED, LocalDateTime.now().minusHours(1));
+        Intake pendingB = intake(2L, IntakeStatus.PENDING, LocalDateTime.now().plusMinutes(10));
+        when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(eq(USER_ID), any()))
+                .thenReturn(List.of(dispensedA, pendingB));
+        when(intakeRepository.findById(2L)).thenReturn(Optional.of(pendingB));
+
+        // App-style explicit request for B while A (DISPENSED) is still unresolved — confirms the
+        // existing eligibility rule already blocks this correctly; nothing changed here.
+        IntakeActionResult result = service.requestIntakeNow(USER_ID, 2L);
+
+        assertEquals(IntakeActionResult.Outcome.BLOCKED_BY_EARLIER_INTAKE, result.outcome());
+        assertEquals(1L, result.blockingIntake().getId());
+        verifyNoInteractions(deviceConnectionPort);
+    }
 }

@@ -179,25 +179,44 @@ public class IntakeOrchestrationService {
         logger.info("[BUTTON_FLOW] dispatching command:dispense to device {} for intake {}", device.getDeviceKey(), target.getId());
         DeviceConnectionPort.DispatchOutcome outcome = deviceConnectionPort.dispatchDispense(device.getDeviceKey(), target.getId());
         logger.info("[BUTTON_FLOW] dispatchDispense outcome for intake {}: {}", target.getId(), outcome);
-        if (outcome != DeviceConnectionPort.DispatchOutcome.ACKED) {
-            // Revert the claim — the device never actually took the command, so the intake must not
-            // be left looking like it's dispensing.
-            intakeRepository.tryTransition(target.getId(), List.of(IntakeStatus.DISPENSING), priorStatus);
-            logger.warn("[BUTTON_FLOW] dispatch not ACKED ({}) -> reverted intake {} back to {}", outcome, target.getId(), priorStatus);
-            if (outcome == DeviceConnectionPort.DispatchOutcome.ACK_TIMEOUT) {
-                return IntakeActionResult.deviceAckTimeout(target, "Pill box didn't respond in time — try again.");
+
+        if (outcome == DeviceConnectionPort.DispatchOutcome.ACKED) {
+            target.setStatus(IntakeStatus.DISPENSING);
+            target.setDeviceId(device.getId());
+            if (target.getApprovedTime() == null) {
+                target.setApprovedTime(LocalDateTime.now());
             }
-            return IntakeActionResult.deviceOffline(target, "Pill box is offline — try again once it reconnects.");
+            Intake saved = intakeRepository.save(target);
+            logger.info("[BUTTON_FLOW] intake {} claimed and dispensing (was {}) — STARTED", saved.getId(), priorStatus);
+            return IntakeActionResult.started(saved);
         }
 
-        target.setStatus(IntakeStatus.DISPENSING);
-        target.setDeviceId(device.getId());
-        if (target.getApprovedTime() == null) {
-            target.setApprovedTime(LocalDateTime.now());
+        if (outcome == DeviceConnectionPort.DispatchOutcome.ACK_TIMEOUT) {
+            // Delivery is UNCERTAIN here, not known-failed: the command was sent, and the device may
+            // well have received it, acted on it, and even physically dispensed — we simply didn't
+            // get the ack back in time (this is exactly what happened with the WebSocket
+            // self-blocking bug: the device acked and dispensed, but the backend's own wait timed
+            // out first). Deliberately do NOT revert to a STARTABLE status here — reverting would
+            // let the very next button press or Take Now select this same intake again and risk a
+            // second physical dispense into a compartment that may already hold the first dose.
+            // Leaving it at DISPENSING keeps it non-STARTABLE until the device's own "dispensed"
+            // event resolves it forward, which still arrives independently of whether the ack
+            // round-trip succeeded. Same conservative philosophy already applied to DISPENSED never
+            // auto-reverting on its own (see MissedIntakeScheduler / CLAUDE.md) — no reliable
+            // jam/delivery-failure detection exists, so an uncertain outcome is left for the
+            // device's own follow-up event (or a human) to resolve, never guessed away.
+            target.setStatus(IntakeStatus.DISPENSING);
+            Intake saved = intakeRepository.save(target);
+            logger.warn("[BUTTON_FLOW] ack uncertain for intake {} — leaving at DISPENSING instead of reverting, to avoid a possible duplicate dispense", target.getId());
+            return IntakeActionResult.deviceAckTimeout(saved,
+                    "Pill box didn't confirm in time — it may still have dispensed. Check the compartment before trying again.");
         }
-        Intake saved = intakeRepository.save(target);
-        logger.info("[BUTTON_FLOW] intake {} claimed and dispensing (was {}) — STARTED", saved.getId(), priorStatus);
-        return IntakeActionResult.started(saved);
+
+        // OFFLINE (or any other non-ACKED outcome): the command never reached the device — no open
+        // session, or the send itself failed — so nothing was dispatched and reverting is safe.
+        intakeRepository.tryTransition(target.getId(), List.of(IntakeStatus.DISPENSING), priorStatus);
+        logger.warn("[BUTTON_FLOW] dispatch failed before reaching the device ({}) -> reverted intake {} back to {}", outcome, target.getId(), priorStatus);
+        return IntakeActionResult.deviceOffline(target, "Pill box is offline — try again once it reconnects.");
     }
 
     private String blockedMessage(Intake blocking) {

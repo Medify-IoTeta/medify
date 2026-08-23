@@ -117,6 +117,26 @@ class IntakeServiceTest {
     }
 
     @Test
+    void markDispensedTransitionsFromDispensingToDispensed() {
+        when(intakeRepository.findById(1L)).thenReturn(Optional.of(intake(1L, IntakeStatus.DISPENSING)));
+
+        Intake result = service.markDispensed(1L);
+
+        assertEquals(IntakeStatus.DISPENSED, result.getStatus());
+        assertNotNull(result.getDispensedTime());
+    }
+
+    @Test
+    void markDispensedIgnoredWhenNotDispensing() {
+        when(intakeRepository.findById(1L)).thenReturn(Optional.of(intake(1L, IntakeStatus.MISSED)));
+
+        Intake result = service.markDispensed(1L);
+
+        assertEquals(IntakeStatus.MISSED, result.getStatus());
+        verify(intakeRepository, never()).save(any());
+    }
+
+    @Test
     void markTakenOnlyFromDispensedAndCancelsPostponeTimer() {
         when(intakeRepository.findById(1L)).thenReturn(Optional.of(intake(1L, IntakeStatus.DISPENSED)));
 

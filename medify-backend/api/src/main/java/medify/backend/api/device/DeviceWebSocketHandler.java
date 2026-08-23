@@ -11,11 +11,14 @@ import medify.backend.domain.port.DeviceRepositoryPort;
 import medify.backend.domain.port.NotificationPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
  * The device side of the relay: one persistent session per connected pill box.
@@ -33,7 +36,9 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     private final IntakeOrchestrationService intakeOrchestrationService;
     private final NotificationPort notificationPort;
     private final ObjectMapper objectMapper;
+    private final Executor buttonPressExecutor;
 
+    @Autowired
     public DeviceWebSocketHandler(DeviceConnectionAdapter connectionAdapter,
                                    DeviceService deviceService,
                                    DeviceRepositoryPort deviceRepository,
@@ -41,6 +46,19 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
                                    IntakeOrchestrationService intakeOrchestrationService,
                                    NotificationPort notificationPort,
                                    ObjectMapper objectMapper) {
+        this(connectionAdapter, deviceService, deviceRepository, intakeService, intakeOrchestrationService,
+                notificationPort, objectMapper, Executors.newCachedThreadPool(DeviceWebSocketHandler::newButtonPressThread));
+    }
+
+    /** Package-private: lets tests substitute a controllable Executor (e.g. a mock, or Runnable::run) to verify button_pressed handling never runs inline on the calling (WebSocket read-dispatch) thread. */
+    DeviceWebSocketHandler(DeviceConnectionAdapter connectionAdapter,
+                            DeviceService deviceService,
+                            DeviceRepositoryPort deviceRepository,
+                            IntakeService intakeService,
+                            IntakeOrchestrationService intakeOrchestrationService,
+                            NotificationPort notificationPort,
+                            ObjectMapper objectMapper,
+                            Executor buttonPressExecutor) {
         this.connectionAdapter = connectionAdapter;
         this.deviceService = deviceService;
         this.deviceRepository = deviceRepository;
@@ -48,6 +66,13 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
         this.intakeOrchestrationService = intakeOrchestrationService;
         this.notificationPort = notificationPort;
         this.objectMapper = objectMapper;
+        this.buttonPressExecutor = buttonPressExecutor;
+    }
+
+    private static Thread newButtonPressThread(Runnable r) {
+        Thread t = new Thread(r, "device-button-press");
+        t.setDaemon(true);
+        return t;
     }
 
     @Override
@@ -92,7 +117,18 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
             }
             case "button_pressed" -> {
                 logger.info("[BUTTON_FLOW] button_pressed event received from device {}", deviceKey);
-                handleButtonPressed(deviceKey);
+                // Must NOT run inline on this thread: requestIntakeNow's dispatch to the device
+                // blocks (up to 5s) waiting for an ack that arrives as a NEW incoming message on
+                // this SAME WebSocket session. Most container WS implementations (including
+                // Tomcat's, which this app uses) serialize per-session message dispatch, so running
+                // this here would self-deadlock — the ack could never be delivered until this
+                // exact call returns, which it can't until the ack is delivered. Confirmed by
+                // runtime logs: the device received command:dispense, acked, and physically
+                // dispensed, while the backend still timed out waiting for that same ack. Handing
+                // this off to buttonPressExecutor frees this thread immediately, so the session's
+                // own read-dispatch can process the ack concurrently — exactly how the app's
+                // HTTP-initiated dispense already worked (an independent thread, not this one).
+                buttonPressExecutor.execute(() -> handleButtonPressed(deviceKey));
             }
             default -> logger.warn("Unknown device event '{}' from device {}", event, deviceKey);
         }
