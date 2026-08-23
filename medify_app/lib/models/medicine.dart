@@ -1,4 +1,7 @@
-DateTime? _parseDateTime(dynamic value) {
+/// Tolerant parse for backend LocalDateTime fields — Jackson may serialize them as an ISO string
+/// or as a [year, month, day, hour, minute, second?, nano?] array depending on config. Shared with
+/// home_screen.dart for parsing an Intake's scheduledTime.
+DateTime? parseBackendDateTime(dynamic value) {
   if (value == null) return null;
   if (value is String) return DateTime.tryParse(value);
   if (value is List && value.length >= 5) {
@@ -92,7 +95,7 @@ class Medicine {
       instructions: customInstructions,
       // Backend uses 'active', Flutter uses 'enabled'
       enabled: json['active'] as bool? ?? json['enabled'] as bool? ?? true,
-      disabledUntil: _parseDateTime(json['disabledUntil']),
+      disabledUntil: parseBackendDateTime(json['disabledUntil']),
     );
   }
 

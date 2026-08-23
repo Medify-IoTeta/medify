@@ -32,14 +32,31 @@ class _HomeScreenState extends State<HomeScreen> {
   /// to show/enable itself and which intake id to act on.
   final Map<String, String> _rawStatusByTiming = {};
   final Map<String, int> _intakeIdByTiming = {};
+  /// Each timing's Intake.scheduledTime, parsed from the backend — the real ingredient (together
+  /// with _earlyWindowMinutes) for deciding whether a PENDING window is inside its Early Window.
+  /// Never guessed from local UI state.
+  final Map<String, DateTime> _scheduledTimeByTiming = {};
+  int _earlyWindowMinutes = 60;
   bool _takeNowInFlight = false;
 
   @override
   void initState() {
     super.initState();
+    _loadEarlyWindowMinutes();
     _loadMedicines();
     _startPolling();
     _registerFcmToken();
+  }
+
+  Future<void> _loadEarlyWindowMinutes() async {
+    try {
+      final settings = await _apiService.getIntakeSettings();
+      final minutes = int.tryParse(settings['earlyWindowMinutes'] ?? '60') ?? 60;
+      if (!mounted) return;
+      setState(() => _earlyWindowMinutes = minutes);
+    } catch (e) {
+      AppLogger.warning('Failed to load earlyWindowMinutes, defaulting to 60: $e', 'Home');
+    }
   }
 
   Future<void> _registerFcmToken() async {
@@ -66,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // One intake per timing window — last one wins if there's ever more than one.
       final statusByTiming = <String, String>{};
       final idByTiming = <String, int>{};
+      final scheduledTimeByTiming = <String, DateTime>{};
       for (final intake in intakes) {
         final timing = (intake['timing'] as String?)?.toUpperCase();
         final status = intake['status'] as String?;
@@ -74,6 +92,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (timing != null && rawId != null) {
           idByTiming[timing] = rawId is num ? rawId.toInt() : int.tryParse('$rawId') ?? -1;
         }
+        final scheduledTime = parseBackendDateTime(intake['scheduledTime']);
+        if (timing != null && scheduledTime != null) scheduledTimeByTiming[timing] = scheduledTime;
       }
 
       if (!mounted) return;
@@ -84,6 +104,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _intakeIdByTiming
           ..clear()
           ..addAll(idByTiming);
+        _scheduledTimeByTiming
+          ..clear()
+          ..addAll(scheduledTimeByTiming);
         _medicines.addAll(medicines.map((m) {
           final mapped = _mapIntakeStatus(statusByTiming[m.timePeriod.name.toUpperCase()]);
           return mapped != null ? m.copyWith(status: mapped) : m;
@@ -101,6 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final intakes = await _apiService.getTodayIntakes();
       final statusByTiming = <String, String>{};
       final idByTiming = <String, int>{};
+      final scheduledTimeByTiming = <String, DateTime>{};
       for (final intake in intakes) {
         final timing = (intake['timing'] as String?)?.toUpperCase();
         final status = intake['status'] as String?;
@@ -109,6 +133,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (timing != null && rawId != null) {
           idByTiming[timing] = rawId is num ? rawId.toInt() : int.tryParse('$rawId') ?? -1;
         }
+        final scheduledTime = parseBackendDateTime(intake['scheduledTime']);
+        if (timing != null && scheduledTime != null) scheduledTimeByTiming[timing] = scheduledTime;
       }
       if (!mounted) return;
       setState(() {
@@ -118,6 +144,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _intakeIdByTiming
           ..clear()
           ..addAll(idByTiming);
+        _scheduledTimeByTiming
+          ..clear()
+          ..addAll(scheduledTimeByTiming);
         for (int i = 0; i < _medicines.length; i++) {
           final m = _medicines[i];
           final mapped = _mapIntakeStatus(statusByTiming[m.timePeriod.name.toUpperCase()]);
@@ -653,14 +682,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Status-driven action row for a timing window, backed by the real backend status (not the
-  /// collapsed MedicationStatus) so MISSED/POSTPONED/PENDING/APPROVED each get a "Take now" while
-  /// DISPENSING/DISPENSED get progress/removal messaging instead of a second dispense action.
+  /// collapsed MedicationStatus). "Take now" shows only for MISSED, POSTPONED, or a PENDING window
+  /// that's actually inside its Early Window right now (checked against the real scheduledTime +
+  /// earlyWindowMinutes, not guessed) — never for APPROVED, and never for a PENDING window before
+  /// its Early Window opens. This is presentation-only: the backend's take-now endpoint remains the
+  /// real eligibility check regardless of what this shows.
   Widget _buildWindowAction(String timing) {
     final status = _rawStatusByTiming[timing];
     if (status == null) return const SizedBox.shrink();
 
-    const startable = {'PENDING', 'APPROVED', 'MISSED', 'POSTPONED'};
-    if (startable.contains(status)) {
+    final showTakeNow = status == 'MISSED' ||
+        status == 'POSTPONED' ||
+        (status == 'PENDING' && _isPendingWithinEarlyWindow(timing));
+
+    if (showTakeNow) {
       final label = switch (status) {
         'MISSED' => 'Take now (missed)',
         'POSTPONED' => 'Take now (postponed)',
@@ -694,5 +729,17 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
       child: Text(info, style: AppTextStyles.bodySm.copyWith(color: AppColors.textSecondary)),
     );
+  }
+
+  /// now >= scheduledTime - earlyWindowMinutes AND now < scheduledTime, using the real
+  /// Intake.scheduledTime from the backend and the real configured earlyWindowMinutes — never
+  /// guessed from local state. Once scheduledTime itself arrives, this intentionally returns false:
+  /// the normal reminder dialog (or, later, the MISSED sweep) is what surfaces the action from then on.
+  bool _isPendingWithinEarlyWindow(String timing) {
+    final scheduledTime = _scheduledTimeByTiming[timing];
+    if (scheduledTime == null) return false;
+    final now = DateTime.now();
+    final earlyWindowStart = scheduledTime.subtract(Duration(minutes: _earlyWindowMinutes));
+    return !now.isBefore(earlyWindowStart) && now.isBefore(scheduledTime);
   }
 }
