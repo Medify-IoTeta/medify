@@ -1,11 +1,10 @@
 package medify.backend.api.service;
 
-import medify.backend.domain.model.Device;
 import medify.backend.domain.model.Intake;
+import medify.backend.domain.model.IntakeActionResult;
 import medify.backend.domain.model.IntakeStatus;
-import medify.backend.domain.port.DeviceConnectionPort;
-import medify.backend.domain.port.DeviceRepositoryPort;
 import medify.backend.domain.port.IntakeRepositoryPort;
+import medify.backend.domain.scheduler.ReminderScheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -14,22 +13,39 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
+/**
+ * Individual status-mutation endpoints (approve/skip/postpone/missed) kept for compatibility and
+ * direct single-step use, each now guarded by an explicit allowed-from-state set so a stray call
+ * can no longer regress an intake that has already progressed (e.g. TAKEN -> SKIPPED).
+ *
+ * dispense() is a thin wrapper around IntakeOrchestrationService.requestIntakeNow — the exact
+ * same shared eligibility/claim logic the physical button and the app's Take Now use — so this
+ * legacy two-step (approve then dispense) endpoint pair can't bypass the earlier-unresolved-intake
+ * rule that take-now enforces.
+ */
 @Service
 public class IntakeService {
     private static final Logger logger = LoggerFactory.getLogger(IntakeService.class);
 
+    private static final Set<IntakeStatus> APPROVE_ALLOWED_FROM = EnumSet.of(IntakeStatus.PENDING, IntakeStatus.MISSED, IntakeStatus.POSTPONED);
+    private static final Set<IntakeStatus> SKIP_ALLOWED_FROM = EnumSet.of(IntakeStatus.PENDING, IntakeStatus.APPROVED, IntakeStatus.MISSED, IntakeStatus.POSTPONED);
+    private static final Set<IntakeStatus> POSTPONE_ALLOWED_FROM = EnumSet.of(IntakeStatus.PENDING, IntakeStatus.APPROVED, IntakeStatus.MISSED, IntakeStatus.POSTPONED);
+    private static final Set<IntakeStatus> MANUAL_MISSED_ALLOWED_FROM = EnumSet.of(IntakeStatus.PENDING, IntakeStatus.APPROVED, IntakeStatus.POSTPONED);
+
     private final IntakeRepositoryPort intakeRepository;
-    private final DeviceRepositoryPort deviceRepository;
-    private final DeviceConnectionPort deviceConnectionPort;
+    private final IntakeOrchestrationService intakeOrchestrationService;
+    private final ReminderScheduler reminderScheduler;
 
     public IntakeService(IntakeRepositoryPort intakeRepository,
-                          DeviceRepositoryPort deviceRepository,
-                          DeviceConnectionPort deviceConnectionPort) {
+                          IntakeOrchestrationService intakeOrchestrationService,
+                          ReminderScheduler reminderScheduler) {
         this.intakeRepository = intakeRepository;
-        this.deviceRepository = deviceRepository;
-        this.deviceConnectionPort = deviceConnectionPort;
+        this.intakeOrchestrationService = intakeOrchestrationService;
+        this.reminderScheduler = reminderScheduler;
     }
 
     public Intake getById(Long id) {
@@ -48,34 +64,24 @@ public class IntakeService {
 
     public Intake approve(Long id) {
         Intake intake = findOrThrow(id);
+        assertTransitionAllowed(intake, APPROVE_ALLOWED_FROM, "approve");
         intake.setStatus(IntakeStatus.APPROVED);
         intake.setApprovedTime(LocalDateTime.now());
         return intakeRepository.save(intake);
     }
 
     /**
-     * Called by the app once it has approved the intake. Relays a dispense
-     * command to the patient's pill box over its WebSocket connection and
-     * blocks briefly for the device's ack — the app decides whether and when
-     * to call this; the backend only relays and reports the outcome.
+     * Legacy single-intake dispense path — delegates to the same shared start-intake logic the
+     * physical button and the app's /take-now endpoint use, targeted explicitly at this intake, so
+     * it's still subject to the earlier-unresolved-intake rule and the atomic dispensing claim.
      */
     public Intake dispense(Long id) {
         Intake intake = findOrThrow(id);
-        if (intake.getStatus() != IntakeStatus.APPROVED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Intake must be APPROVED before dispensing");
+        IntakeActionResult result = intakeOrchestrationService.requestIntakeNow(intake.getUserId(), id);
+        if (result.outcome() == IntakeActionResult.Outcome.STARTED) {
+            return result.intake();
         }
-
-        Device device = deviceRepository.findByUserId(intake.getUserId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No pill box registered for this patient"));
-
-        DeviceConnectionPort.DispatchOutcome outcome = deviceConnectionPort.dispatchDispense(device.getDeviceKey(), id);
-        if (outcome != DeviceConnectionPort.DispatchOutcome.ACKED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Pill box is offline — try again once it reconnects");
-        }
-
-        intake.setStatus(IntakeStatus.DISPENSING);
-        intake.setDeviceId(device.getId());
-        return intakeRepository.save(intake);
+        throw new ResponseStatusException(HttpStatus.CONFLICT, result.message());
     }
 
     /** Device reported the motor finished releasing the pills. Not TAKEN yet — that's IR-confirmed only. */
@@ -99,25 +105,58 @@ public class IntakeService {
         }
         intake.setStatus(IntakeStatus.TAKEN);
         intake.setReleasedTime(LocalDateTime.now());
+        reminderScheduler.cancelPostponeReminder(id);
         return intakeRepository.save(intake);
     }
 
     public Intake skip(Long id) {
         Intake intake = findOrThrow(id);
+        assertTransitionAllowed(intake, SKIP_ALLOWED_FROM, "skip");
         intake.setStatus(IntakeStatus.SKIPPED);
+        reminderScheduler.cancelPostponeReminder(id);
         return intakeRepository.save(intake);
     }
 
-    public Intake postpone(Long id) {
+    /** Postpones for a relative number of minutes from now. */
+    public Intake postpone(Long id, int minutes) {
+        return postponeUntil(id, LocalDateTime.now().plusMinutes(minutes));
+    }
+
+    /** Postpones until a specific clock time (today, or tomorrow if that time has already passed). */
+    public Intake postpone(Long id, LocalTime until) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime target = now.toLocalDate().atTime(until);
+        if (!target.isAfter(now)) {
+            target = target.plusDays(1);
+        }
+        return postponeUntil(id, target);
+    }
+
+    private Intake postponeUntil(Long id, LocalDateTime until) {
         Intake intake = findOrThrow(id);
+        assertTransitionAllowed(intake, POSTPONE_ALLOWED_FROM, "postpone");
         intake.setStatus(IntakeStatus.POSTPONED);
-        return intakeRepository.save(intake);
+        intake.setPostponedAt(LocalDateTime.now());
+        intake.setPostponedUntil(until);
+        Intake saved = intakeRepository.save(intake);
+        reminderScheduler.schedulePostponeReminder(id, until);
+        return saved;
     }
 
     public Intake missed(Long id) {
         Intake intake = findOrThrow(id);
+        assertTransitionAllowed(intake, MANUAL_MISSED_ALLOWED_FROM, "mark missed");
         intake.setStatus(IntakeStatus.MISSED);
+        intake.setMissedAt(LocalDateTime.now());
+        reminderScheduler.cancelPostponeReminder(id);
         return intakeRepository.save(intake);
+    }
+
+    private void assertTransitionAllowed(Intake intake, Set<IntakeStatus> allowedFrom, String action) {
+        if (!allowedFrom.contains(intake.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot " + action + " an intake that is " + intake.getStatus());
+        }
     }
 
     private Intake findOrThrow(Long id) {

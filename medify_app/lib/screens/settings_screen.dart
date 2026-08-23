@@ -86,6 +86,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _editEarlyWindow() async {
+    if (!widget.isPatient) return;
+    final current = int.tryParse(_intakeSettings['earlyWindowMinutes'] ?? '60') ?? 60;
+    final controller = TextEditingController(text: current.toString());
+    final minutes = await showDialog<int>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Early Window'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'How many minutes before a scheduled dose you can take it early — the dose becomes '
+              'available for "Take now" from that point on.',
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Minutes before (0–180)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, int.tryParse(controller.text)),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (minutes == null) return;
+    try {
+      final updated = await _apiService.updateEarlyWindowMinutes(minutes);
+      if (!mounted) return;
+      setState(() => _intakeSettings = updated);
+    } catch (e) {
+      _showError(e);
+    }
+  }
+
   Future<void> _addCaregiver() async {
     final email = _emailController.text.trim();
     if (email.isEmpty) return;
@@ -159,6 +205,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _timeRow('noon', 'Noon', Icons.wb_cloudy_outlined),
                   const SizedBox(height: AppSpacing.sm),
                   _timeRow('evening', 'Evening', Icons.nights_stay_outlined),
+
+                  const SizedBox(height: AppSpacing.xxl),
+                  Text('Early Intake', style: AppTextStyles.h3),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    widget.isPatient
+                        ? 'How early a dose can be taken before its scheduled time.'
+                        : 'Only the patient can change this.',
+                    style: AppTextStyles.caption,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _earlyWindowRow(),
 
                   const SizedBox(height: AppSpacing.xxl),
                   Text('Caregivers', style: AppTextStyles.h3),
@@ -246,6 +304,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: const Icon(Icons.edit_outlined, size: 20),
               color: AppColors.primary,
               onPressed: () => _editTime(key, label),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _earlyWindowRow() {
+    final minutes = _intakeSettings['earlyWindowMinutes'] ?? '60';
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.muted,
+        borderRadius: AppRadius.lgBorder,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primaryLight,
+              borderRadius: AppRadius.mdBorder,
+            ),
+            child: const Icon(Icons.fast_forward_outlined, color: AppColors.primary, size: 20),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(child: Text('Minutes before scheduled time', style: AppTextStyles.bodyLg)),
+          Text('$minutes min', style: AppTextStyles.bodyLg),
+          if (widget.isPatient) ...[
+            const SizedBox(width: AppSpacing.sm),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 20),
+              color: AppColors.primary,
+              onPressed: _editEarlyWindow,
             ),
           ],
         ],

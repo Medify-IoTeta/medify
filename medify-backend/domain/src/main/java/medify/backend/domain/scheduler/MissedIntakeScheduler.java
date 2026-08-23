@@ -14,12 +14,17 @@ import java.util.List;
 
 /**
  * Sweeps two kinds of intakes that never got resolved before their window ran out:
- * MISSED — never even started (still PENDING/APPROVED when windowEndTime passed).
+ * MISSED — never reached DISPENSING (still PENDING/APPROVED/POSTPONED) when windowEndTime passed.
  * INCOMPLETE — pills were dispensed but the IR sensor never confirmed the
  *   compartment emptied within incompleteGraceMinutes of the DISPENSED timestamp.
- * These are judged on different clocks on purpose: MISSED is relative to the
- * original reminder window, INCOMPLETE is relative to when dispensing actually
- * happened, so a late approval doesn't unfairly shorten the IR confirmation window.
+ * These are judged on different clocks on purpose: MISSED is relative to windowEndTime, which is
+ * always derived from the intake's scheduledTime (never from when the row was actually created —
+ * early-window intakes must not become MISSED just for having existed for a while), INCOMPLETE is
+ * relative to when dispensing actually happened, so a late approval doesn't unfairly shorten the
+ * IR confirmation window.
+ *
+ * MISSED is not a dead end: IntakeOrchestrationService still allows STARTABLE transitions out of
+ * it (see IntakeStatus.STARTABLE) — this sweep only records that the original window passed.
  */
 @Component
 public class MissedIntakeScheduler {
@@ -28,15 +33,18 @@ public class MissedIntakeScheduler {
     private final IntakeRepositoryPort intakeRepository;
     private final CaregiverLinkRepositoryPort caregiverLinkRepository;
     private final NotificationLogRepositoryPort notificationLogRepository;
+    private final ReminderScheduler reminderScheduler;
     private final int incompleteGraceMinutes;
 
     public MissedIntakeScheduler(IntakeRepositoryPort intakeRepository,
                                  CaregiverLinkRepositoryPort caregiverLinkRepository,
                                  NotificationLogRepositoryPort notificationLogRepository,
+                                 ReminderScheduler reminderScheduler,
                                  @Value("${medify.intake.incomplete-grace-minutes:30}") int incompleteGraceMinutes) {
         this.intakeRepository = intakeRepository;
         this.caregiverLinkRepository = caregiverLinkRepository;
         this.notificationLogRepository = notificationLogRepository;
+        this.reminderScheduler = reminderScheduler;
         this.incompleteGraceMinutes = incompleteGraceMinutes;
     }
 
@@ -50,7 +58,9 @@ public class MissedIntakeScheduler {
         List<Intake> expired = intakeRepository.findExpiredPendingIntakes(LocalDateTime.now());
 
         for (Intake intake : expired) {
+            reminderScheduler.cancelPostponeReminder(intake.getId());
             intake.setStatus(IntakeStatus.MISSED);
+            intake.setMissedAt(LocalDateTime.now());
             intakeRepository.save(intake);
             logger.info("Intake {} marked as MISSED", intake.getId());
 

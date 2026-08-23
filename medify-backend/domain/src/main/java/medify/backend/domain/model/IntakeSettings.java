@@ -25,6 +25,10 @@ public class IntakeSettings {
     @Column(name = "evening_time", nullable = false)
     private LocalTime eveningTime;
 
+    /** How many minutes before the scheduled time a dose becomes eligible for early intake. */
+    @Column(name = "early_window_minutes", nullable = false)
+    private Integer earlyWindowMinutes;
+
     public LocalTime timeFor(Timing timing) {
         return switch (timing) {
             case MORNING -> morningTime;

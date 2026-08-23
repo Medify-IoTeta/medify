@@ -153,6 +153,24 @@ class ApiService {
 
   // ── Intakes ───────────────────────────────────────────────────
 
+  /// The one call behind starting/continuing an intake — the same shared backend logic the
+  /// physical button uses. Pass [intakeId] to target a specific intake (e.g. "Take now" on a
+  /// MISSED/POSTPONED card); omit it to act on whichever intake is earliest-and-eligible right
+  /// now. Always returns 200 with a structured `outcome` — STARTED, or one of several blocked/
+  /// unavailable outcomes with a `message` and (when relevant) a `blockingIntake` — never throws
+  /// for a normal "not eligible right now" result, so callers should check `outcome` rather than
+  /// wrapping this in a try/catch for business-logic branching.
+  Future<Map<String, dynamic>> takeNow({int? intakeId}) async {
+    final url = Uri.parse('$baseUrl/api/intakes/take-now');
+    final response = await http.post(
+      url,
+      headers: await _authHeaders(json: true),
+      body: jsonEncode({if (intakeId != null) 'intakeId': intakeId}),
+    );
+    if (response.statusCode == 200) return jsonDecode(response.body);
+    _throwApiException(response);
+  }
+
   Future<Map<String, dynamic>> approveIntake(int intakeId) async {
     final url = Uri.parse('$baseUrl/api/intakes/$intakeId/approve');
     final response = await http.patch(url, headers: await _authHeaders());
@@ -190,9 +208,19 @@ class ApiService {
     throw Exception('Failed to skip intake: ${response.statusCode}');
   }
 
-  Future<Map<String, dynamic>> postponeIntake(int intakeId) async {
+  /// Flips the intake to POSTPONED and schedules its re-notification server-side, in one call —
+  /// pass exactly one of [minutes] (relative snooze) or [until] ("HH:mm", absolute time); defaults
+  /// to 15 minutes if neither is given.
+  Future<Map<String, dynamic>> postponeIntake(int intakeId, {int? minutes, String? until}) async {
     final url = Uri.parse('$baseUrl/api/intakes/$intakeId/postpone');
-    final response = await http.patch(url, headers: await _authHeaders());
+    final response = await http.patch(
+      url,
+      headers: await _authHeaders(json: true),
+      body: jsonEncode({
+        if (until != null) 'until': until
+        else 'minutes': minutes ?? 15,
+      }),
+    );
 
     if (response.statusCode == 200) return jsonDecode(response.body);
     throw Exception('Failed to postpone intake: ${response.statusCode}');
@@ -365,6 +393,22 @@ class ApiService {
       url,
       headers: await _authHeaders(json: true),
       body: jsonEncode({'morning': morning, 'noon': noon, 'evening': evening}),
+    );
+    if (response.statusCode == 200) {
+      return Map<String, String>.from(jsonDecode(response.body));
+    }
+    _throwApiException(response);
+  }
+
+  /// How many minutes before the scheduled time a dose becomes eligible for early intake.
+  /// Also returned as part of getIntakeSettings()['earlyWindowMinutes'] — this is a dedicated
+  /// setter so changing it never accidentally touches the reminder times.
+  Future<Map<String, String>> updateEarlyWindowMinutes(int minutes) async {
+    final url = Uri.parse('$baseUrl/api/intake-settings/early-window');
+    final response = await http.put(
+      url,
+      headers: await _authHeaders(json: true),
+      body: jsonEncode({'earlyWindowMinutes': minutes}),
     );
     if (response.statusCode == 200) {
       return Map<String, String>.from(jsonDecode(response.body));

@@ -12,7 +12,6 @@ import 'register_screen.dart';
 import 'edit_medicines_screen.dart';
 import 'fill_box_guide_screen.dart';
 import 'settings_screen.dart';
-import 'demo_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -25,6 +24,14 @@ class _HomeScreenState extends State<HomeScreen> {
   final ApiService _apiService = ApiService();
   final List<Medicine> _medicines = [];
   bool _polling = true;
+
+  /// Raw backend intake status per timing window (e.g. 'MISSED', 'POSTPONED', 'APPROVED') — kept
+  /// separately from MedicationStatus because that enum collapses several backend statuses into
+  /// "pending" for card display, but the Take Now action needs the real status to decide whether
+  /// to show/enable itself and which intake id to act on.
+  final Map<String, String> _rawStatusByTiming = {};
+  final Map<String, int> _intakeIdByTiming = {};
+  bool _takeNowInFlight = false;
 
   @override
   void initState() {
@@ -55,26 +62,27 @@ class _HomeScreenState extends State<HomeScreen> {
       final medicines = results[0] as List<Medicine>;
       final intakes   = results[1] as List<Map<String, dynamic>>;
 
-      // One intake per timing window — if more than one ever exists for the
-      // same day (backend doesn't guarantee list order), the highest id
-      // (most recently created) wins, not whichever happens to come last.
-      final latestByTiming = <String, Map<String, dynamic>>{};
+      // One intake per timing window — last one wins if there's ever more than one.
+      final statusByTiming = <String, String>{};
+      final idByTiming = <String, int>{};
       for (final intake in intakes) {
         final timing = (intake['timing'] as String?)?.toUpperCase();
-        if (timing == null) continue;
-        final id = intake['id'];
-        final currentId = latestByTiming[timing]?['id'];
-        if (currentId == null || (id is num && currentId is num && id > currentId)) {
-          latestByTiming[timing] = intake;
+        final status = intake['status'] as String?;
+        final rawId = intake['id'];
+        if (timing != null && status != null) statusByTiming[timing] = status;
+        if (timing != null && rawId != null) {
+          idByTiming[timing] = rawId is num ? rawId.toInt() : int.tryParse('$rawId') ?? -1;
         }
       }
-      final statusByTiming = <String, String>{
-        for (final entry in latestByTiming.entries)
-          if (entry.value['status'] != null) entry.key: entry.value['status'] as String,
-      };
 
       if (!mounted) return;
       setState(() {
+        _rawStatusByTiming
+          ..clear()
+          ..addAll(statusByTiming);
+        _intakeIdByTiming
+          ..clear()
+          ..addAll(idByTiming);
         _medicines.addAll(medicines.map((m) {
           final mapped = _mapIntakeStatus(statusByTiming[m.timePeriod.name.toUpperCase()]);
           return mapped != null ? m.copyWith(status: mapped) : m;
@@ -85,6 +93,41 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Refreshes intake state without touching the already-loaded medicine list — used after a
+  /// take-now attempt to pick up whatever the backend actually did, rather than assuming.
+  Future<void> _refreshIntakeStatuses() async {
+    try {
+      final intakes = await _apiService.getTodayIntakes();
+      final statusByTiming = <String, String>{};
+      final idByTiming = <String, int>{};
+      for (final intake in intakes) {
+        final timing = (intake['timing'] as String?)?.toUpperCase();
+        final status = intake['status'] as String?;
+        final rawId = intake['id'];
+        if (timing != null && status != null) statusByTiming[timing] = status;
+        if (timing != null && rawId != null) {
+          idByTiming[timing] = rawId is num ? rawId.toInt() : int.tryParse('$rawId') ?? -1;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _rawStatusByTiming
+          ..clear()
+          ..addAll(statusByTiming);
+        _intakeIdByTiming
+          ..clear()
+          ..addAll(idByTiming);
+        for (int i = 0; i < _medicines.length; i++) {
+          final m = _medicines[i];
+          final mapped = _mapIntakeStatus(statusByTiming[m.timePeriod.name.toUpperCase()]);
+          _medicines[i] = m.copyWith(status: mapped ?? MedicationStatus.pending);
+        }
+      });
+    } catch (e) {
+      AppLogger.warning('Failed to refresh intake statuses: $e', 'Home');
+    }
+  }
+
   MedicationStatus? _mapIntakeStatus(String? intakeStatus) {
     switch (intakeStatus) {
       case 'TAKEN':      return MedicationStatus.taken;
@@ -92,7 +135,8 @@ class _HomeScreenState extends State<HomeScreen> {
       case 'DISPENSED':  return MedicationStatus.dispensed;
       case 'MISSED':     return MedicationStatus.missed;
       case 'INCOMPLETE': return MedicationStatus.incomplete;
-      default:           return null; // leave the medicine's own default (pending)
+      case 'POSTPONED':  return MedicationStatus.postponed;
+      default:           return null; // PENDING/APPROVED -> leave the medicine's own default (pending)
     }
   }
 
@@ -209,34 +253,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // DEMO-ONLY: remove after exhibition
-  Future<void> _goToDemo() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => DemoScreen(onReset: _resetDemoWindow)),
-    );
-  }
-
-  // DEMO-ONLY: remove after exhibition — forces the window's local status back
-  // to pending immediately, bypassing _setWindowStatus's "never regress from
-  // taken" guard on purpose, so an already-completed window visually resets
-  // instead of staying stuck on "Taken" while the backend intake is reset.
-  // Does NOT send a reminder notification — this is a pure reset so the flow
-  // can be replayed; firing the actual reminder is a separate step.
-  Future<void> _resetDemoWindow(String timing) async {
-    if (mounted) {
-      setState(() {
-        for (int i = 0; i < _medicines.length; i++) {
-          final m = _medicines[i];
-          if (m.timePeriod.name.toUpperCase() == timing.toUpperCase()) {
-            _medicines[i] = m.copyWith(status: MedicationStatus.pending);
-          }
-        }
-      });
-    }
-    await _apiService.resetDemoIntake(timing);
-  }
-
   // ── Polling ──────────────────────────────────────────────────
 
   void _startPolling() {
@@ -250,9 +266,21 @@ class _HomeScreenState extends State<HomeScreen> {
           if (!mounted) return false;
           final type = result['type'] as String?;
           if (type == 'BUTTON_PRESSED') {
-            // Backend doesn't pick an intake for a button press — we do, same
-            // as we would for any other trigger.
-            await _handleButtonPressed();
+            // The backend has already decided what to do about the button press by this point
+            // (see IntakeOrchestrationService/DeviceWebSocketHandler) — the button dispenses on
+            // its own even if this app is closed. This is purely informational: show what
+            // happened and refresh so the UI reflects it.
+            final message = result['message'] as String? ?? 'Physical button pressed.';
+            _showResultSnack(message, success: (result['outcome'] as String?) == 'STARTED');
+            await _refreshIntakeStatuses();
+          } else if (type == 'BLOCKED_REMINDER') {
+            // The backend withheld this dose's normal reminder because an earlier dose is still
+            // unresolved (see ReminderScheduler.maybeSendScheduledReminder) — this must never be
+            // shown as the normal actionable reminder dialog, since this dose isn't actually
+            // available yet. Purely informational.
+            final message = result['message'] as String? ?? 'A previous dose needs attention first.';
+            _showResultSnack(message, success: false);
+            await _refreshIntakeStatuses();
           } else {
             final message  = result['message']  as String;
             final intakeId = result['intakeId'] as int?;
@@ -266,48 +294,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       return _polling && mounted;
     });
-  }
-
-  Future<void> _handleButtonPressed() async {
-    try {
-      final intakes = await _apiService.getTodayIntakes();
-      // Match PENDING and APPROVED: the UI shows both as "pending" (see
-      // _mapIntakeStatus — neither status is mapped, so the medicine card
-      // just keeps its default pending look), e.g. when approve() succeeded
-      // but a prior dispense attempt failed and reverted the local badge.
-      // The button should still be able to act on either.
-      final pending = intakes.firstWhere(
-        (i) => i['status'] == 'PENDING' || i['status'] == 'APPROVED',
-        orElse: () => const <String, dynamic>{},
-      );
-
-      if (pending.isEmpty) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Button pressed, but nothing is currently pending'),
-        ));
-        return;
-      }
-
-      final rawId = pending['id'];
-      final intakeId = rawId is num ? rawId.toInt() : int.tryParse('$rawId');
-      if (intakeId == null) {
-        AppLogger.error('Button-pressed intake has no usable id: $pending', null, 'Home');
-        _showResultSnack('Button pressed, but the pending intake could not be read', success: false);
-        return;
-      }
-
-      final timing = pending['timing'] as String?;
-      if (!mounted) return;
-      await _showReminderDialog(
-        'Physical button pressed on the pill box — confirm to dispense',
-        intakeId,
-        timing,
-      );
-    } catch (e) {
-      AppLogger.error('Failed to resolve intake for button press', e, 'Home');
-      _showResultSnack('Button pressed, but something went wrong: $e', success: false);
-    }
   }
 
   Future<void> _showReminderDialog(String message, int? intakeId, String? timing) async {
@@ -368,14 +354,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     context: context,
                     initialTime: TimeOfDay.now(),
                   );
-                  if (picked != null) {
-                    if (intakeId != null) {
-                      await _apiService.postponeIntake(intakeId);
-                    }
-                    await _apiService.sendNotification(
-                      'snooze_custom:${picked.hour}:${picked.minute}',
-                      intakeId: intakeId,
-                    );
+                  if (picked != null && intakeId != null) {
+                    final formatted =
+                        '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+                    await _apiService.postponeIntake(intakeId, until: formatted);
+                    await _refreshIntakeStatuses();
                   }
                 },
                 child: const Text('Choose Time'),
@@ -384,16 +367,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPressed: () async {
                   Navigator.pop(context);
                   if (intakeId != null) {
-                    await _apiService.postponeIntake(intakeId);
+                    await _apiService.postponeIntake(intakeId, minutes: 15);
+                    await _refreshIntakeStatuses();
                   }
-                  await _apiService.sendNotification('snooze_15', intakeId: intakeId);
                 },
                 child: const Text('Remind in 15 min'),
               ),
               TextButton(
                 onPressed: () async {
                   Navigator.pop(context);
-                  await _handleConfirmIntake(intakeId, timing);
+                  await _performTakeNow(intakeId: intakeId, timingHint: timing);
                 },
                 child: const Text('OK'),
               ),
@@ -404,35 +387,94 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Backend, not the app, decides when an intake actually becomes TAKEN — that
-  // only happens once the device's IR sensor confirms the compartment is
-  // empty. This just triggers the dispense and watches for that to happen.
-  Future<void> _handleConfirmIntake(int? intakeId, String? timing) async {
-    if (intakeId == null) return;
-
+  /// The one action behind starting/continuing an intake from the app — MISSED/POSTPONED "Take
+  /// now" buttons, the reminder dialog's OK, and a proactive early-window take-now all funnel
+  /// through this. It never decides eligibility itself: the backend's shared
+  /// IntakeOrchestrationService does, and this just renders whatever outcome comes back.
+  Future<void> _performTakeNow({int? intakeId, String? timingHint}) async {
+    if (_takeNowInFlight) return; // guards against double-tap; the backend also protects itself
+    setState(() => _takeNowInFlight = true);
     try {
-      await _apiService.approveIntake(intakeId);
-      _setWindowStatus(timing, MedicationStatus.dispensing);
+      final result = await _apiService.takeNow(intakeId: intakeId);
+      final outcome = result['outcome'] as String?;
 
-      await _apiService.dispenseIntake(intakeId);
+      if (outcome == 'STARTED') {
+        final startedIntake = result['intake'] as Map<String, dynamic>?;
+        final startedTiming = (startedIntake?['timing'] as String?) ?? timingHint;
+        final rawId = startedIntake?['id'];
+        final startedId = rawId is num ? rawId.toInt() : (rawId != null ? int.tryParse('$rawId') : null);
 
-      final finalStatus = await _pollIntakeUntilTaken(intakeId);
+        _setWindowStatus(startedTiming, MedicationStatus.dispensing);
 
-      if (finalStatus == 'TAKEN') {
-        _setWindowStatus(timing, MedicationStatus.taken);
-        _showResultSnack('Pills dispensed — intake recorded', success: true);
-      } else {
-        // Still DISPENSED (or unknown) when we stopped watching — no timeout
-        // or failure state here by design. It'll show as taken once the IR
-        // sensor confirms, next time the list refreshes.
-        _setWindowStatus(timing, MedicationStatus.dispensed);
-        _showResultSnack('Dispensed — remove the medication to complete', success: true);
+        final finalStatus = startedId != null ? await _pollIntakeUntilTaken(startedId) : null;
+        if (finalStatus == 'TAKEN') {
+          _setWindowStatus(startedTiming, MedicationStatus.taken);
+          _showResultSnack('Pills dispensed — intake recorded', success: true);
+        } else {
+          // Still DISPENSED (or unknown) when we stopped watching — no timeout or failure state
+          // here by design. It'll show as taken once the IR sensor confirms.
+          _setWindowStatus(startedTiming, MedicationStatus.dispensed);
+          _showResultSnack('Dispensed — remove the medication to complete', success: true);
+        }
+        return;
       }
+
+      // Anything other than STARTED is a normal, expected business outcome (nothing available,
+      // blocked by an earlier dose, already in progress, device offline, ...) — not an error.
+      await _refreshIntakeStatuses();
+      if (!mounted) return;
+      await _showTakeNowOutcomeDialog(result);
+    } on ApiException catch (e) {
+      _showResultSnack(e.message, success: false);
     } catch (e) {
-      _setWindowStatus(timing, MedicationStatus.pending);
-      AppLogger.error('Intake action failed', e, 'Home');
+      AppLogger.error('Take now failed', e, 'Home');
       _showResultSnack('Error: $e', success: false);
+    } finally {
+      if (mounted) setState(() => _takeNowInFlight = false);
     }
+  }
+
+  /// Explains a non-STARTED take-now outcome in plain language, and — when it's blocked by an
+  /// earlier unresolved dose — offers to act on that dose directly instead of just saying no.
+  Future<void> _showTakeNowOutcomeDialog(Map<String, dynamic> result) async {
+    final outcome = result['outcome'] as String?;
+    final blocking = result['blockingIntake'] as Map<String, dynamic>?;
+    final message = result['message'] as String? ?? 'Nothing to do right now.';
+
+    if (outcome == 'NOTHING_AVAILABLE') {
+      _showResultSnack(message, success: false);
+      return;
+    }
+
+    final blockingId = blocking?['id'];
+    final blockingIntakeId = blockingId is num ? blockingId.toInt() : null;
+    final blockingStatus = blocking?['status'] as String?;
+    final canOfferBlockingIntake = outcome == 'BLOCKED_BY_EARLIER_INTAKE' &&
+        blockingIntakeId != null &&
+        (blockingStatus == 'MISSED' || blockingStatus == 'POSTPONED' ||
+            blockingStatus == 'PENDING' || blockingStatus == 'APPROVED');
+
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('One thing first'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+          if (canOfferBlockingIntake)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _performTakeNow(intakeId: blockingIntakeId);
+              },
+              child: const Text('Take that now'),
+            ),
+        ],
+      ),
+    );
   }
 
   void _setWindowStatus(String? timing, MedicationStatus status) {
@@ -505,7 +547,6 @@ class _HomeScreenState extends State<HomeScreen> {
         onEditMedicines: _goToEdit,
         onFillBox: _goToFillGuide,
         onSettings: _goToSettings,
-        onDemo: _goToDemo, // DEMO-ONLY: remove after exhibition
       ),
       body: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
@@ -591,10 +632,55 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             const Divider(height: 1),
             ...meds.map((m) => MedicationCard(medicine: m)),
+            _buildWindowAction(timing),
             const SizedBox(height: AppSpacing.sm),
           ],
         ),
       ),
+    );
+  }
+
+  /// Status-driven action row for a timing window, backed by the real backend status (not the
+  /// collapsed MedicationStatus) so MISSED/POSTPONED/PENDING/APPROVED each get a "Take now" while
+  /// DISPENSING/DISPENSED get progress/removal messaging instead of a second dispense action.
+  Widget _buildWindowAction(String timing) {
+    final status = _rawStatusByTiming[timing];
+    if (status == null) return const SizedBox.shrink();
+
+    const startable = {'PENDING', 'APPROVED', 'MISSED', 'POSTPONED'};
+    if (startable.contains(status)) {
+      final label = switch (status) {
+        'MISSED' => 'Take now (missed)',
+        'POSTPONED' => 'Take now (postponed)',
+        _ => 'Take now',
+      };
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
+        child: SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _takeNowInFlight
+                ? null
+                : () => _performTakeNow(intakeId: _intakeIdByTiming[timing], timingHint: timing),
+            child: Text(label),
+          ),
+        ),
+      );
+    }
+
+    String? info;
+    if (status == 'DISPENSED') {
+      info = 'Medication is waiting in the compartment — remove it to complete this dose.';
+    } else if (status == 'INCOMPLETE') {
+      info = 'This dose wasn\'t confirmed taken and may still be in the compartment.';
+    } else if (status == 'DISPENSING') {
+      info = 'Dispensing…';
+    }
+    if (info == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
+      child: Text(info, style: AppTextStyles.bodySm.copyWith(color: AppColors.textSecondary)),
     );
   }
 }

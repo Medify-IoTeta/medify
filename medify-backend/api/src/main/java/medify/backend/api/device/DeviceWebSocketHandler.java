@@ -4,7 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import medify.backend.api.service.DeviceService;
+import medify.backend.api.service.IntakeOrchestrationService;
 import medify.backend.api.service.IntakeService;
+import medify.backend.domain.model.IntakeActionResult;
 import medify.backend.domain.port.DeviceRepositoryPort;
 import medify.backend.domain.port.NotificationPort;
 import org.slf4j.Logger;
@@ -28,6 +30,7 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     private final DeviceService deviceService;
     private final DeviceRepositoryPort deviceRepository;
     private final IntakeService intakeService;
+    private final IntakeOrchestrationService intakeOrchestrationService;
     private final NotificationPort notificationPort;
     private final ObjectMapper objectMapper;
 
@@ -35,12 +38,14 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
                                    DeviceService deviceService,
                                    DeviceRepositoryPort deviceRepository,
                                    IntakeService intakeService,
+                                   IntakeOrchestrationService intakeOrchestrationService,
                                    NotificationPort notificationPort,
                                    ObjectMapper objectMapper) {
         this.connectionAdapter = connectionAdapter;
         this.deviceService = deviceService;
         this.deviceRepository = deviceRepository;
         this.intakeService = intakeService;
+        this.intakeOrchestrationService = intakeOrchestrationService;
         this.notificationPort = notificationPort;
         this.objectMapper = objectMapper;
     }
@@ -101,12 +106,19 @@ public class DeviceWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * Just a relay — resolves who to notify and hands off to NotificationPort.
-     * Does not look at intakes at all: which intake to act on is the app's call, not the backend's.
+     * The physical button drives the exact same shared business logic as the app's Take Now
+     * (IntakeOrchestrationService.requestIntakeNow) — it decides eligibility, claims the intake,
+     * and dispatches the dispense command itself, right here, with no dependency on the app being
+     * open or polling. The notification sent afterwards is purely informational: by the time the
+     * app (if any) sees it, the decision has already been made and acted on.
      */
     private void handleButtonPressed(String deviceKey) {
         deviceRepository.findByDeviceKey(deviceKey).ifPresentOrElse(
-                device -> notificationPort.sendButtonPressed(device.getUserId()),
+                device -> {
+                    IntakeActionResult result = intakeOrchestrationService.requestIntakeNow(device.getUserId(), null);
+                    logger.info("Button press on device {} -> {}", deviceKey, result.outcome());
+                    notificationPort.sendButtonPressed(device.getUserId(), result);
+                },
                 () -> logger.warn("button_pressed from unregistered device {}", deviceKey)
         );
     }

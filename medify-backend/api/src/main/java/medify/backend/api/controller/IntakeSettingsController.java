@@ -28,9 +28,24 @@ public class IntakeSettingsController {
 
     @PutMapping
     public Map<String, String> update(@RequestBody Map<String, String> body) {
-        if (currentUserContext.getUser().getType() != UserType.PATIENT) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the patient can change intake times");
-        }
+        requirePatient();
         return service.update(body.get("morning"), body.get("noon"), body.get("evening"));
+    }
+
+    /** Body: {"earlyWindowMinutes": 60}. Kept separate from the reminder-times PUT above so changing one never accidentally clobbers the other. */
+    @PutMapping("/early-window")
+    public Map<String, String> updateEarlyWindow(@RequestBody Map<String, Object> body) {
+        requirePatient();
+        Object value = body.get("earlyWindowMinutes");
+        if (!(value instanceof Number)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "earlyWindowMinutes must be a number");
+        }
+        return service.updateEarlyWindow(((Number) value).intValue());
+    }
+
+    private void requirePatient() {
+        if (currentUserContext.getUser().getType() != UserType.PATIENT) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the patient can change intake settings");
+        }
     }
 }

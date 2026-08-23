@@ -109,6 +109,7 @@ class _StatusBadge extends StatelessWidget {
       case MedicationStatus.dispensing: return 'Dispensing';
       case MedicationStatus.dispensed:  return 'Confirm removal';
       case MedicationStatus.incomplete: return 'Incomplete';
+      case MedicationStatus.postponed:  return 'Postponed';
     }
   }
 
@@ -120,6 +121,7 @@ class _StatusBadge extends StatelessWidget {
       case MedicationStatus.dispensing: return Icons.autorenew;
       case MedicationStatus.dispensed:  return Icons.hourglass_bottom;
       case MedicationStatus.incomplete: return Icons.hourglass_disabled;
+      case MedicationStatus.postponed:  return Icons.snooze;
     }
   }
 
@@ -131,6 +133,7 @@ class _StatusBadge extends StatelessWidget {
       case MedicationStatus.dispensing: return AppColors.primary;
       case MedicationStatus.dispensed:  return AppColors.primary;
       case MedicationStatus.incomplete: return AppColors.error;
+      case MedicationStatus.postponed:  return AppColors.warning;
     }
   }
 }

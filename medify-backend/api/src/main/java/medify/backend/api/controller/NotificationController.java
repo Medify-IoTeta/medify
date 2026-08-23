@@ -34,6 +34,14 @@ public class NotificationController {
             result.put("intakeId", pending.intakeId());
             result.put("timing", pending.timing());
             result.put("type", pending.type().name());
+            // Only populated for BUTTON_PRESSED — the outcome of the physical-button business
+            // decision, already made server-side by the time this is polled. Purely informational.
+            if (pending.outcome() != null) {
+                result.put("outcome", pending.outcome());
+            }
+            if (pending.blockingIntakeId() != null) {
+                result.put("blockingIntakeId", pending.blockingIntakeId());
+            }
             return result;
         }
         return Map.of("status", "EMPTY");
@@ -67,14 +75,15 @@ public class NotificationController {
         }
 
         if (response.equals("snooze_15")) {
-            intakeService.postpone(intakeId);
-            reminderScheduler.snoozeByIntakeId(intakeId, 15);
+            // Legacy path kept for compatibility — IntakeController's PATCH /{id}/postpone now does
+            // this (status flip + scheduling the re-notification) in one call; new clients should
+            // call that directly instead of this endpoint.
+            intakeService.postpone(intakeId, 15);
         } else if (response.startsWith("snooze_custom:")) {
             String[] parts = response.split(":");
             int hour = Integer.parseInt(parts[1]);
             int minute = Integer.parseInt(parts[2]);
-            intakeService.postpone(intakeId);
-            reminderScheduler.snoozeUntilByIntakeId(intakeId, hour, minute);
+            intakeService.postpone(intakeId, java.time.LocalTime.of(hour, minute));
         } else if (response.equals("skip")) {
             intakeService.skip(intakeId);
         } else {
