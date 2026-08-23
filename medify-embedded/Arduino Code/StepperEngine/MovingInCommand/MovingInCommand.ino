@@ -90,9 +90,23 @@ unsigned long lastIrPrintMs = 0;
 const unsigned long IR_SERIAL_PRINT_INTERVAL_MS = 150; // throttle Serial output while watching
 
 // ── Button debounce state ────────────────────────────────────────
-int lastButtonState = HIGH;
-unsigned long lastButtonChangeMs = 0;
+// True debounce, not just a rate limiter: a raw reading must hold steady for
+// BUTTON_DEBOUNCE_MS before it's trusted as the new stable state. A press
+// fires exactly once (buttonEventArmed latches on press) and only re-arms
+// once a stable RELEASE has been confirmed — holding the button, or any
+// contact bounce/chatter while held, cannot retrigger it.
+int buttonStableState = HIGH;
+int buttonLastRawState = HIGH;
+unsigned long buttonLastChangeMs = 0;
+bool buttonEventArmed = true;
 const unsigned long BUTTON_DEBOUNCE_MS = 300;
+
+// Independent cooldown on actually SENDING button_pressed — even genuinely
+// distinct repeated presses (not bounce) shouldn't spam the backend/app
+// when nothing has had time to change. Configurable in one place, not a
+// magic number buried in the logic.
+unsigned long lastButtonSentMs = 0;
+const unsigned long BUTTON_PRESS_COOLDOWN_MS = 5000;
 
 void setup() {
   pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
@@ -265,17 +279,40 @@ void pollIrSensor() {
 // command:dispense message, same as if the app had been tapped instead.
 
 void pollButton() {
-  int state = digitalRead(BUTTON_PIN);
+  int rawState = digitalRead(BUTTON_PIN);
   unsigned long now = millis();
 
-  if (state != lastButtonState && (now - lastButtonChangeMs) > BUTTON_DEBOUNCE_MS) {
-    lastButtonChangeMs = now;
-    lastButtonState = state;
-
-    if (state == LOW) { // press transition (INPUT_PULLUP: LOW = pressed)
-      sendButtonPressedEvent();
-    }
+  if (rawState != buttonLastRawState) {
+    buttonLastRawState = rawState;
+    buttonLastChangeMs = now;
   }
+
+  // Only trust the raw reading once it's held steady for the full debounce window.
+  if ((now - buttonLastChangeMs) < BUTTON_DEBOUNCE_MS) return;
+  if (buttonStableState == buttonLastRawState) return; // no confirmed change
+
+  buttonStableState = buttonLastRawState;
+
+  if (buttonStableState == LOW) { // confirmed press (INPUT_PULLUP: LOW = pressed)
+    Serial.println("BUTTON: PRESSED");
+    if (buttonEventArmed) {
+      buttonEventArmed = false; // re-arms only on a confirmed release, below
+      maybeSendButtonPressedEvent();
+    }
+  } else {
+    Serial.println("BUTTON: RELEASED");
+    buttonEventArmed = true;
+  }
+}
+
+void maybeSendButtonPressedEvent() {
+  unsigned long now = millis();
+  if (now - lastButtonSentMs < BUTTON_PRESS_COOLDOWN_MS) {
+    Serial.println("BUTTON_PRESSED IGNORED (cooldown)");
+    return;
+  }
+  lastButtonSentMs = now;
+  sendButtonPressedEvent();
 }
 
 void sendButtonPressedEvent() {
@@ -285,6 +322,7 @@ void sendButtonPressedEvent() {
   doc["type"] = "event";
   doc["event"] = "button_pressed";
   sendJson(doc);
+  Serial.println("BUTTON_PRESSED SENT");
 }
 
 // ── Outgoing messages to the backend ────────────────────────────
