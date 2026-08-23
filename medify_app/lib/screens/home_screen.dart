@@ -21,7 +21,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final ApiService _apiService = ApiService();
   final List<Medicine> _medicines = [];
   bool _polling = true;
@@ -38,14 +38,29 @@ class _HomeScreenState extends State<HomeScreen> {
   final Map<String, DateTime> _scheduledTimeByTiming = {};
   int _earlyWindowMinutes = 60;
   bool _takeNowInFlight = false;
+  /// Re-entrancy guard for _refreshIntakeStatuses — it's now called from several places that can
+  /// fire close together (the 3s poll tick, notification handlers, postpone actions, the
+  /// post-Take-Now watcher) and must never overlap itself.
+  bool _refreshingIntakes = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadEarlyWindowMinutes();
     _loadMedicines();
     _startPolling();
     _registerFcmToken();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // The 3s poll's Future.delayed chain can be throttled or suspended entirely while
+      // backgrounded (both Android and iOS impose this) — force an immediate refresh on return
+      // rather than waiting for whatever's left of the current delay to elapse.
+      _refreshIntakeStatuses();
+    }
   }
 
   Future<void> _loadEarlyWindowMinutes() async {
@@ -117,9 +132,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Refreshes intake state without touching the already-loaded medicine list — used after a
-  /// take-now attempt to pick up whatever the backend actually did, rather than assuming.
+  /// Refreshes intake state without touching the already-loaded medicine list. Called from several
+  /// places that can fire close together — the 3s poll tick, notification handlers, postpone
+  /// actions, lifecycle resume, the post-Take-Now watcher — so it guards against overlapping
+  /// itself: if a call is already in flight, a concurrent call is a no-op (the next tick, or
+  /// whichever trigger fires next, will pick up current state anyway).
   Future<void> _refreshIntakeStatuses() async {
+    if (_refreshingIntakes) return;
+    _refreshingIntakes = true;
     try {
       final intakes = await _apiService.getTodayIntakes();
       final statusByTiming = <String, String>{};
@@ -155,6 +175,8 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } catch (e) {
       AppLogger.warning('Failed to refresh intake statuses: $e', 'Home');
+    } finally {
+      _refreshingIntakes = false;
     }
   }
 
@@ -172,6 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _polling = false;
     super.dispose();
   }
@@ -332,6 +355,18 @@ class _HomeScreenState extends State<HomeScreen> {
         AppLogger.warning('Notification poll failed, retrying: $e', 'Home');
       }
 
+      // Unconditional per-tick refresh — the notification-drain above only surfaces specific
+      // queued event types (BUTTON_PRESSED, BLOCKED_REMINDER, reminders); it's not a general
+      // "intake state changed" signal. This is what makes DISPENSING/DISPENSED/TAKEN visible
+      // within one poll interval regardless of what caused the transition (physical button, a
+      // different client, the device's own dispensed/intake_confirmed events) rather than only
+      // when this client happens to be the one that triggered it. Safe to call every tick even
+      // when one of the branches above already called it — _refreshIntakeStatuses guards against
+      // overlapping itself.
+      if (_polling && mounted) {
+        await _refreshIntakeStatuses();
+      }
+
       return _polling && mounted;
     });
   }
@@ -446,7 +481,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         _setWindowStatus(startedTiming, MedicationStatus.dispensing);
 
-        final finalStatus = startedId != null ? await _pollIntakeUntilTaken(startedId) : null;
+        final finalStatus = startedId != null ? await _pollIntakeUntilTaken(startedId, startedTiming) : null;
         if (finalStatus == 'TAKEN') {
           _setWindowStatus(startedTiming, MedicationStatus.taken);
           _showResultSnack('Pills dispensed — intake recorded', success: true);
@@ -531,12 +566,16 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// Polls every 3s for up to ~2 minutes, same interval as the notification
-  /// poll. Gives up silently rather than surfacing a timeout error — DISPENSED
-  /// with no confirmation yet is a valid, expected state, not a failure.
-  Future<String?> _pollIntakeUntilTaken(int intakeId) async {
+  /// Polls every 3s for up to ~2 minutes, same interval as the notification poll. Updates the UI
+  /// to DISPENSED as soon as that's observed — not only once the loop finishes — so a slow or
+  /// missing IR confirmation doesn't leave the window stuck showing "Dispensing…" for the full
+  /// budget when the backend already recorded DISPENSED seconds in. Gives up silently rather than
+  /// surfacing a timeout error — DISPENSED with no confirmation yet is a valid, expected state,
+  /// not a failure.
+  Future<String?> _pollIntakeUntilTaken(int intakeId, String? timing) async {
     const maxAttempts = 40;
     String? lastStatus;
+    bool shownDispensed = false;
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       await Future.delayed(const Duration(seconds: 3));
       if (!mounted) return lastStatus;
@@ -544,6 +583,10 @@ class _HomeScreenState extends State<HomeScreen> {
         final intake = await _apiService.getIntake(intakeId);
         lastStatus = intake?['status'] as String?;
         if (lastStatus == 'TAKEN') return lastStatus;
+        if (lastStatus == 'DISPENSED' && !shownDispensed) {
+          shownDispensed = true;
+          _setWindowStatus(timing, MedicationStatus.dispensed);
+        }
       } catch (e) {
         AppLogger.warning('Intake status poll failed, retrying: $e', 'Home');
       }
