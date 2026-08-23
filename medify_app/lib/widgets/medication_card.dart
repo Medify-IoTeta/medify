@@ -46,8 +46,6 @@ class MedicationCard extends StatelessWidget {
                 ],
               ),
             ),
-
-            _StatusBadge(status: medicine.status),
           ],
         ),
       ),
@@ -70,10 +68,12 @@ class MedicationCard extends StatelessWidget {
   }
 }
 
-class _StatusBadge extends StatelessWidget {
+/// Renders once per timing window (see HomeScreen._buildTimingGroup) — the intake status belongs
+/// to the window/intake, not to each medication, so this is no longer used per-row here.
+class StatusBadge extends StatelessWidget {
   final MedicationStatus status;
 
-  const _StatusBadge({required this.status});
+  const StatusBadge({super.key, required this.status});
 
   @override
   Widget build(BuildContext context) {

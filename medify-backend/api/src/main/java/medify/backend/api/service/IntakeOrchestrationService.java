@@ -88,8 +88,17 @@ public class IntakeOrchestrationService {
      */
     private IntakeActionResult doRequestIntakeNow(Long userId, Long explicitIntakeId) {
         logger.info("[BUTTON_FLOW] requestIntakeNow entered: userId={}, explicitIntakeId={}", userId, explicitIntakeId);
-        List<Intake> unresolved = intakeRepository.findUnresolvedOrderByScheduledTimeAsc(userId, IntakeStatus.UNRESOLVED);
-        logger.info("[BUTTON_FLOW] unresolved intakes for user {}: count={}, ids={}",
+        // The repository call itself only guarantees scheduledTime ascending — sortByPriority
+        // re-orders it into the actual selection rule (physical-safety-blocking statuses first,
+        // then MISSED, then everything else, each sub-ordered by scheduledTime). Without this,
+        // two co-eligible PENDING intakes would still come out in scheduledTime order correctly,
+        // but a MISSED intake would NOT reliably outrank a chronologically-closer PENDING one, and
+        // — the part that actually matters for physical safety — nothing would guarantee a
+        // DISPENSED/DISPENSING/INCOMPLETE intake stays absolute-first regardless of what else
+        // exists.
+        List<Intake> unresolved = IntakeChronology.sortByPriority(
+                intakeRepository.findUnresolvedOrderByScheduledTimeAsc(userId, IntakeStatus.UNRESOLVED));
+        logger.info("[BUTTON_FLOW] unresolved intakes for user {} (priority order): count={}, ids={}",
                 userId, unresolved.size(), unresolved.stream().map(Intake::getId).toList());
 
         if (unresolved.isEmpty()) {

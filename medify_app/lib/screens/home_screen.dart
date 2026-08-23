@@ -646,6 +646,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final taken = meds.where((m) => m.status == MedicationStatus.taken).length;
     final color = _timingColor(timing);
     final label = timing[0] + timing.substring(1).toLowerCase();
+    // The intake status belongs to the window, not to each medication — all medicines in a timing
+    // window share one intake, so this reads it once here instead of once per medication card.
+    final windowStatus = _mapIntakeStatus(_rawStatusByTiming[timing]) ?? MedicationStatus.pending;
 
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -667,7 +670,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: Icon(_timingIcon(timing), color: color, size: 20),
           ),
-          title: Text(label, style: AppTextStyles.bodyLg),
+          title: Row(
+            children: [
+              Expanded(child: Text(label, style: AppTextStyles.bodyLg)),
+              const SizedBox(width: AppSpacing.sm),
+              StatusBadge(status: windowStatus),
+            ],
+          ),
           subtitle: Text('$taken / ${meds.length} taken',
               style: AppTextStyles.bodySm),
           children: [

@@ -230,9 +230,10 @@ public class ReminderScheduler {
         logger.info("Sent scheduled reminder for intake {} ({})", intake.getId(), intake.getTiming());
     }
 
-    /** Same primitive IntakeOrchestrationService uses at dispense time: is anything chronologically earlier for this user still unresolved? */
+    /** Same primitive IntakeOrchestrationService uses at dispense time: is anything higher-priority (see IntakeChronology) for this user still unresolved? */
     private Optional<Intake> findEarlierUnresolvedIntake(Intake intake) {
-        List<Intake> unresolved = intakeRepository.findUnresolvedOrderByScheduledTimeAsc(intake.getUserId(), IntakeStatus.UNRESOLVED);
+        List<Intake> unresolved = IntakeChronology.sortByPriority(
+                intakeRepository.findUnresolvedOrderByScheduledTimeAsc(intake.getUserId(), IntakeStatus.UNRESOLVED));
         return IntakeChronology.findEarlierUnresolved(unresolved, intake.getId());
     }
 

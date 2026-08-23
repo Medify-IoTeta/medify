@@ -269,4 +269,44 @@ class IntakeOrchestrationServiceTest {
         assertEquals(1L, result.blockingIntake().getId());
         verifyNoInteractions(deviceConnectionPort);
     }
+
+    // ── Selection priority (physical button, no explicit target) — see IntakeChronology ───────
+
+    @Test
+    void physicalButtonPicksEarlierPendingRegardlessOfRepositoryReturnOrder() {
+        // Reproduces the reported bug: two PENDING intakes both inside their Early Window, one
+        // scheduled earlier than the other — the earlier one (by scheduledTime, never by which
+        // Timing window it belongs to) must be selected regardless of what order the repository
+        // happened to return them in.
+        Intake earlier = intake(10L, IntakeStatus.PENDING, LocalDateTime.now().plusMinutes(5));
+        Intake later = intake(11L, IntakeStatus.PENDING, LocalDateTime.now().plusMinutes(30));
+        when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(eq(USER_ID), any()))
+                .thenReturn(List.of(later, earlier)); // deliberately "wrong" order
+        stubDeviceOnlineAndAcked();
+        when(intakeRepository.tryTransition(eq(10L), anyCollection(), eq(IntakeStatus.DISPENSING))).thenReturn(true);
+        when(intakeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        IntakeActionResult result = service.requestIntakeNow(USER_ID, null);
+
+        assertEquals(IntakeActionResult.Outcome.STARTED, result.outcome());
+        assertEquals(10L, result.intake().getId(), "must select the earlier-scheduled intake");
+        verify(deviceConnectionPort).dispatchDispense("pillbox-01", 10L);
+    }
+
+    @Test
+    void earlierDispensedStillBlocksLaterMissedUnderNewPriorityOrdering() {
+        // The dangerous inversion a naive "MISSED always first" rule would introduce: an older
+        // DISPENSED intake (pills physically in the compartment) must still block a chronologically
+        // LATER MISSED intake — physical safety must never be overridden by MISSED's priority.
+        Intake dispensedA = intake(1L, IntakeStatus.DISPENSED, LocalDateTime.now().minusHours(4));
+        Intake missedB = intake(2L, IntakeStatus.MISSED, LocalDateTime.now().minusHours(1));
+        when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(eq(USER_ID), any()))
+                .thenReturn(List.of(missedB, dispensedA)); // deliberately "wrong" order
+
+        IntakeActionResult result = service.requestIntakeNow(USER_ID, null);
+
+        assertEquals(IntakeActionResult.Outcome.AWAITING_REMOVAL, result.outcome());
+        assertEquals(1L, result.intake().getId());
+        verifyNoInteractions(deviceConnectionPort);
+    }
 }
