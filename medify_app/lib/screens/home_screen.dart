@@ -12,6 +12,7 @@ import 'register_screen.dart';
 import 'edit_medicines_screen.dart';
 import 'fill_box_guide_screen.dart';
 import 'settings_screen.dart';
+import 'demo_screen.dart'; // DEMO-ONLY: remove after exhibition
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -250,6 +251,16 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const SettingsScreen(isPatient: true)),
+    );
+  }
+
+  // DEMO-ONLY: remove after exhibition
+  Future<void> _goToDemo() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DemoScreen(onReset: _apiService.resetDemoIntake),
+      ),
     );
   }
 
@@ -547,6 +558,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onEditMedicines: _goToEdit,
         onFillBox: _goToFillGuide,
         onSettings: _goToSettings,
+        onDemo: _goToDemo, // DEMO-ONLY: remove after exhibition
       ),
       body: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),

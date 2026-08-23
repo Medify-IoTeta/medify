@@ -416,6 +416,23 @@ class ApiService {
     _throwApiException(response);
   }
 
+  /// DEMO-ONLY: remove after exhibition — how many minutes after the scheduled time a dose stays
+  /// available before becoming MISSED. Default (production) is 60; this lets the demo screen turn
+  /// it down to a couple of minutes for quick testing. Also returned as part of
+  /// getIntakeSettings()['missedWindowMinutes'].
+  Future<Map<String, String>> updateMissedWindowMinutes(int minutes) async {
+    final url = Uri.parse('$baseUrl/api/intake-settings/missed-window');
+    final response = await http.put(
+      url,
+      headers: await _authHeaders(json: true),
+      body: jsonEncode({'missedWindowMinutes': minutes}),
+    );
+    if (response.statusCode == 200) {
+      return Map<String, String>.from(jsonDecode(response.body));
+    }
+    _throwApiException(response);
+  }
+
   // ── Caregiver management ────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> getCaregivers() async {

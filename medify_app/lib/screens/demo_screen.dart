@@ -14,7 +14,54 @@ class DemoScreen extends StatefulWidget {
 }
 
 class _DemoScreenState extends State<DemoScreen> {
+  static const List<int> _missedWindowPresets = [1, 2, 5, 10, 30, 60];
+
+  final ApiService _apiService = ApiService();
   String? _loadingTiming;
+
+  bool _loadingMissedWindow = true;
+  int? _missedWindowMinutes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMissedWindow();
+  }
+
+  Future<void> _loadMissedWindow() async {
+    try {
+      final settings = await _apiService.getIntakeSettings();
+      final minutes = int.tryParse(settings['missedWindowMinutes'] ?? '60') ?? 60;
+      if (!mounted) return;
+      setState(() {
+        _missedWindowMinutes = minutes;
+        _loadingMissedWindow = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingMissedWindow = false);
+    }
+  }
+
+  Future<void> _setMissedWindow(int minutes) async {
+    setState(() => _loadingMissedWindow = true);
+    try {
+      final updated = await _apiService.updateMissedWindowMinutes(minutes);
+      if (!mounted) return;
+      setState(() {
+        _missedWindowMinutes = int.tryParse(updated['missedWindowMinutes'] ?? '$minutes') ?? minutes;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('MISSED window set to $minutes min')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is ApiException ? e.message : 'Something went wrong.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => _loadingMissedWindow = false);
+    }
+  }
 
   Future<void> _reset(String timing) async {
     setState(() => _loadingTiming = timing);
@@ -39,6 +86,36 @@ class _DemoScreenState extends State<DemoScreen> {
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.lg),
         children: [
+          Text('MISSED window duration', style: AppTextStyles.h3),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'How long after the scheduled time a dose stays available before becoming '
+            'MISSED. Demo/testing only — production default is 60 minutes and is '
+            'unaffected unless you change this here.',
+            style: AppTextStyles.caption,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _loadingMissedWindow
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              : Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: _missedWindowPresets.map((minutes) {
+                    final selected = minutes == _missedWindowMinutes;
+                    return ChoiceChip(
+                      label: Text('$minutes min'),
+                      selected: selected,
+                      onSelected: selected ? null : (_) => _setMissedWindow(minutes),
+                    );
+                  }).toList(),
+                ),
+
+          const SizedBox(height: AppSpacing.xxl),
           Text('Reset a window', style: AppTextStyles.h3),
           const SizedBox(height: AppSpacing.xs),
           Text(

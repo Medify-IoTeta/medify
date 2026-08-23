@@ -17,6 +17,8 @@ public class IntakeSettingsService {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm");
     private static final int MIN_EARLY_WINDOW_MINUTES = 0;
     private static final int MAX_EARLY_WINDOW_MINUTES = 180;
+    private static final int MIN_MISSED_WINDOW_MINUTES = 1;
+    private static final int MAX_MISSED_WINDOW_MINUTES = 180;
 
     private final IntakeSettingsRepositoryPort repository;
     private final ReminderScheduler reminderScheduler;
@@ -62,6 +64,26 @@ public class IntakeSettingsService {
         return format(saved);
     }
 
+    /**
+     * DEMO-ONLY control (see medify_app DemoScreen) — how many minutes after the scheduled time a
+     * dose stays available before MissedIntakeScheduler sweeps it to MISSED. Default 60 keeps
+     * production behavior unchanged; this exists purely so a demo/test run doesn't have to wait an
+     * hour to see the MISSED flow.
+     */
+    public Map<String, String> updateMissedWindow(int missedWindowMinutes) {
+        if (missedWindowMinutes < MIN_MISSED_WINDOW_MINUTES || missedWindowMinutes > MAX_MISSED_WINDOW_MINUTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "missedWindowMinutes must be between " + MIN_MISSED_WINDOW_MINUTES + " and " + MAX_MISSED_WINDOW_MINUTES);
+        }
+        IntakeSettings settings = repository.getSettings();
+        settings.setMissedWindowMinutes(missedWindowMinutes);
+        IntakeSettings saved = repository.save(settings);
+        // Reconcile immediately (not just on the next 30s tick) so an untouched PENDING intake's
+        // windowEndTime is recalculated right away — see ReminderScheduler.reconcileScheduledTimeIfUntouched.
+        reminderScheduler.reconcileNow();
+        return format(saved);
+    }
+
     private LocalTime parse(String value) {
         try {
             return LocalTime.parse(value, FMT);
@@ -75,7 +97,8 @@ public class IntakeSettingsService {
                 "morning", settings.getMorningTime().format(FMT),
                 "noon", settings.getNoonTime().format(FMT),
                 "evening", settings.getEveningTime().format(FMT),
-                "earlyWindowMinutes", String.valueOf(settings.getEarlyWindowMinutes()));
+                "earlyWindowMinutes", String.valueOf(settings.getEarlyWindowMinutes()),
+                "missedWindowMinutes", String.valueOf(settings.getMissedWindowMinutes()));
     }
 
 }

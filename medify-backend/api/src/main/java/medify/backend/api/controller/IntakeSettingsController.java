@@ -43,6 +43,17 @@ public class IntakeSettingsController {
         return service.updateEarlyWindow(((Number) value).intValue());
     }
 
+    /** DEMO-ONLY (see medify_app DemoScreen). Body: {"missedWindowMinutes": 2}. */
+    @PutMapping("/missed-window")
+    public Map<String, String> updateMissedWindow(@RequestBody Map<String, Object> body) {
+        requirePatient();
+        Object value = body.get("missedWindowMinutes");
+        if (!(value instanceof Number)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "missedWindowMinutes must be a number");
+        }
+        return service.updateMissedWindow(((Number) value).intValue());
+    }
+
     private void requirePatient() {
         if (currentUserContext.getUser().getType() != UserType.PATIENT) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the patient can change intake settings");

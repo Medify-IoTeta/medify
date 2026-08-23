@@ -131,38 +131,47 @@ public class ReminderScheduler {
         if (existing.isEmpty()) {
             LocalDateTime earlyWindowStart = todayOccurrence.minusMinutes(settings.getEarlyWindowMinutes());
             if (!now.isBefore(earlyWindowStart)) {
-                createIntakeForOccurrence(patientId, timing, todayOccurrence);
+                createIntakeForOccurrence(patientId, timing, todayOccurrence, settings.getMissedWindowMinutes());
             }
             return;
         }
 
         Intake intake = existing.get();
-        reconcileScheduledTimeIfUntouched(intake, todayOccurrence);
+        reconcileScheduledTimeIfUntouched(intake, todayOccurrence, settings.getMissedWindowMinutes());
         maybeSendScheduledReminder(intake, now);
     }
 
     /**
-     * If the reminder time for this timing is edited while today's occurrence is still an
-     * untouched PENDING intake, that row's scheduledTime/windowEndTime must move with it —
-     * otherwise it would silently keep referring to the old time forever. Once the intake has
-     * progressed (any status other than PENDING) or its scheduled-time reminder has already been
-     * evaluated, it is historical and must never be rewritten by a later schedule edit.
+     * If the reminder time OR the missed-window duration (DEMO-only control — see IntakeSettings)
+     * is edited while today's occurrence is still an untouched PENDING intake, that row's
+     * scheduledTime/windowEndTime must move to match — otherwise it would silently keep referring
+     * to stale values. Deliberately compares the currently-configured values against what's stored
+     * rather than only checking whether scheduledTime moved, because missedWindowMinutes can change
+     * on its own (same scheduledTime, different windowEndTime) — e.g. flipping the demo control
+     * from 60 to 2 minutes without touching the reminder time at all must still recompute
+     * windowEndTime. Once the intake has progressed (any status other than PENDING) or its
+     * scheduled-time reminder has already been evaluated, it is historical and must never be
+     * rewritten by a later settings edit.
      */
-    void reconcileScheduledTimeIfUntouched(Intake intake, LocalDateTime currentlyConfiguredTime) {
+    void reconcileScheduledTimeIfUntouched(Intake intake, LocalDateTime currentlyConfiguredTime, int missedWindowMinutes) {
         if (intake.getStatus() != IntakeStatus.PENDING || intake.getReminderEvaluatedAt() != null) {
             return;
         }
-        if (intake.getScheduledTime().equals(currentlyConfiguredTime)) {
+        LocalDateTime expectedWindowEndTime = currentlyConfiguredTime.plusMinutes(missedWindowMinutes);
+        boolean scheduledTimeChanged = !intake.getScheduledTime().equals(currentlyConfiguredTime);
+        boolean windowEndTimeChanged = !expectedWindowEndTime.equals(intake.getWindowEndTime());
+        if (!scheduledTimeChanged && !windowEndTimeChanged) {
             return;
         }
-        logger.info("Reconciling intake {} scheduledTime {} -> {} (reminder time changed)",
-                intake.getId(), intake.getScheduledTime(), currentlyConfiguredTime);
+        logger.info("Reconciling intake {}: scheduledTime {} -> {}, windowEndTime {} -> {}",
+                intake.getId(), intake.getScheduledTime(), currentlyConfiguredTime,
+                intake.getWindowEndTime(), expectedWindowEndTime);
         intake.setScheduledTime(currentlyConfiguredTime);
-        intake.setWindowEndTime(currentlyConfiguredTime.plusHours(1));
+        intake.setWindowEndTime(expectedWindowEndTime);
         intakeRepository.save(intake);
     }
 
-    void createIntakeForOccurrence(Long patientId, Timing timing, LocalDateTime scheduledTime) {
+    void createIntakeForOccurrence(Long patientId, Timing timing, LocalDateTime scheduledTime, int missedWindowMinutes) {
         try {
             Intake intake = new Intake();
             intake.setUserId(patientId);
@@ -170,7 +179,7 @@ public class ReminderScheduler {
             intake.setScheduledTime(scheduledTime);
             intake.setScheduledDate(scheduledTime.toLocalDate());
             intake.setWindowStartTime(LocalDateTime.now());
-            intake.setWindowEndTime(scheduledTime.plusHours(1));
+            intake.setWindowEndTime(scheduledTime.plusMinutes(missedWindowMinutes));
             intake.setStatus(IntakeStatus.PENDING);
             Intake saved = intakeRepository.save(intake);
             logger.info("Created PENDING intake {} for {} occurrence at {}", saved.getId(), timing, scheduledTime);
@@ -297,6 +306,38 @@ public class ReminderScheduler {
 
         logger.info("Manually triggered {} reminder, intake id={}", timing, intake.getId());
         notificationPort.send("Time to take your " + label(timing) + " medicines", intake.getId(), timing.name());
+    }
+
+    /**
+     * DEMO-ONLY (POST /api/notification/test?timing=X, driven by the app's "For Demo Only" screen)
+     * — resets today's intake for this timing back to a clean PENDING, in place, so the flow can be
+     * replayed without waiting for a new early window. Sends no notification. If no intake exists
+     * for today yet, this is a no-op (the next reconcile tick will create one normally).
+     */
+    public void resetIntakeForDemo(Timing timing) {
+        Long patientId = userRepository.findFirstByType(UserType.PATIENT)
+                .map(user -> user.getId())
+                .orElse(null);
+        if (patientId == null) {
+            return;
+        }
+        intakeRepository.findByUserIdAndTimingAndScheduledDate(patientId, timing, LocalDate.now())
+                .ifPresent(intake -> {
+                    cancelPostponeReminder(intake.getId());
+                    intake.setStatus(IntakeStatus.PENDING);
+                    intake.setDeviceId(null);
+                    intake.setApprovedTime(null);
+                    intake.setDispensedTime(null);
+                    intake.setReleasedTime(null);
+                    intake.setReminderEvaluatedAt(null);
+                    intake.setMissedAt(null);
+                    intake.setPostponedAt(null);
+                    intake.setPostponedUntil(null);
+                    intake.setBlockedNotifiedIntakeId(null);
+                    intake.setBlockedNotifiedStatus(null);
+                    intakeRepository.save(intake);
+                    logger.info("Demo reset: intake {} ({}) reset to PENDING", intake.getId(), timing);
+                });
     }
 
     // ── Postpone re-notification (replaces the old Thread.sleep-based snooze) ──────

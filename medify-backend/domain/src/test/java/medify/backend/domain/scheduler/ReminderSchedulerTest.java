@@ -53,9 +53,14 @@ class ReminderSchedulerTest {
     }
 
     private IntakeSettings settingsWithNoon(LocalTime noon, int earlyWindowMinutes) {
+        return settingsWithNoon(noon, earlyWindowMinutes, 60);
+    }
+
+    private IntakeSettings settingsWithNoon(LocalTime noon, int earlyWindowMinutes, int missedWindowMinutes) {
         IntakeSettings settings = new IntakeSettings();
         settings.setNoonTime(noon);
         settings.setEarlyWindowMinutes(earlyWindowMinutes);
+        settings.setMissedWindowMinutes(missedWindowMinutes);
         return settings;
     }
 
@@ -367,7 +372,7 @@ class ReminderSchedulerTest {
         intake.setScheduledTime(oldTime);
         intake.setWindowEndTime(oldTime.plusHours(1));
 
-        scheduler.reconcileScheduledTimeIfUntouched(intake, newTime);
+        scheduler.reconcileScheduledTimeIfUntouched(intake, newTime, 60);
 
         assertEquals(newTime, intake.getScheduledTime());
         assertEquals(newTime.plusHours(1), intake.getWindowEndTime());
@@ -384,7 +389,7 @@ class ReminderSchedulerTest {
         intake.setScheduledTime(oldTime);
         intake.setWindowEndTime(oldTime.plusHours(1));
 
-        scheduler.reconcileScheduledTimeIfUntouched(intake, newTime);
+        scheduler.reconcileScheduledTimeIfUntouched(intake, newTime, 60);
 
         assertEquals(oldTime, intake.getScheduledTime());
         verify(intakeRepository, never()).save(any());
@@ -400,10 +405,101 @@ class ReminderSchedulerTest {
         intake.setScheduledTime(oldTime);
         intake.setReminderEvaluatedAt(oldTime); // scheduled-time reminder already fired
 
-        scheduler.reconcileScheduledTimeIfUntouched(intake, newTime);
+        scheduler.reconcileScheduledTimeIfUntouched(intake, newTime, 60);
 
         assertEquals(oldTime, intake.getScheduledTime());
         verify(intakeRepository, never()).save(any());
+    }
+
+    // ── DEMO-only missedWindowMinutes control ──────────────────────────────────────────────
+
+    @Test
+    void defaultMissedWindowIs60MinutesEqualToPreviousHardcodedBehavior() {
+        LocalDateTime scheduledTime = LocalDateTime.of(2026, 1, 1, 12, 0);
+        when(intakeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        scheduler.createIntakeForOccurrence(PATIENT_ID, Timing.NOON, scheduledTime, 60);
+
+        ArgumentCaptor<Intake> captor = ArgumentCaptor.forClass(Intake.class);
+        verify(intakeRepository).save(captor.capture());
+        assertEquals(LocalDateTime.of(2026, 1, 1, 13, 0), captor.getValue().getWindowEndTime());
+    }
+
+    @Test
+    void customDemoValueOf2MinutesIsAppliedAtCreation() {
+        LocalDateTime scheduledTime = LocalDateTime.of(2026, 1, 1, 12, 0);
+        when(intakeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        scheduler.createIntakeForOccurrence(PATIENT_ID, Timing.NOON, scheduledTime, 2);
+
+        ArgumentCaptor<Intake> captor = ArgumentCaptor.forClass(Intake.class);
+        verify(intakeRepository).save(captor.capture());
+        assertEquals(LocalDateTime.of(2026, 1, 1, 12, 2), captor.getValue().getWindowEndTime());
+    }
+
+    @Test
+    void untouchedPendingIntakeReconciledWhenMissedWindowMinutesChangesAloneScheduledTimeUnchanged() {
+        // scheduled 12:00, was created under the old 60-minute setting -> windowEndTime 13:00
+        LocalDateTime scheduledTime = LocalDateTime.of(2026, 1, 1, 12, 0);
+        Intake intake = new Intake();
+        intake.setId(20L);
+        intake.setStatus(IntakeStatus.PENDING);
+        intake.setScheduledTime(scheduledTime);
+        intake.setWindowEndTime(scheduledTime.plusHours(1));
+
+        // Demo setting changes to 2 minutes while scheduledTime itself is unchanged.
+        scheduler.reconcileScheduledTimeIfUntouched(intake, scheduledTime, 2);
+
+        assertEquals(scheduledTime, intake.getScheduledTime(), "scheduledTime itself must not move");
+        assertEquals(LocalDateTime.of(2026, 1, 1, 12, 2), intake.getWindowEndTime());
+        verify(intakeRepository).save(intake);
+    }
+
+    @Test
+    void progressedIntakeNotRewrittenWhenMissedWindowMinutesChanges() {
+        LocalDateTime scheduledTime = LocalDateTime.of(2026, 1, 1, 12, 0);
+        Intake intake = new Intake();
+        intake.setId(21L);
+        intake.setStatus(IntakeStatus.DISPENSED); // already progressed
+        intake.setScheduledTime(scheduledTime);
+        intake.setWindowEndTime(scheduledTime.plusHours(1));
+
+        scheduler.reconcileScheduledTimeIfUntouched(intake, scheduledTime, 2);
+
+        assertEquals(scheduledTime.plusHours(1), intake.getWindowEndTime(), "must not rewrite a progressed intake's history");
+        verify(intakeRepository, never()).save(any());
+    }
+
+    @Test
+    void noSpuriousSaveWhenNeitherScheduledTimeNorMissedWindowActuallyChanged() {
+        LocalDateTime scheduledTime = LocalDateTime.of(2026, 1, 1, 12, 0);
+        Intake intake = new Intake();
+        intake.setId(22L);
+        intake.setStatus(IntakeStatus.PENDING);
+        intake.setScheduledTime(scheduledTime);
+        intake.setWindowEndTime(scheduledTime.plusMinutes(60));
+
+        scheduler.reconcileScheduledTimeIfUntouched(intake, scheduledTime, 60);
+
+        verify(intakeRepository, never()).save(any());
+    }
+
+    @Test
+    void earlyWindowCreationStillDoesNotAffectMissedTimingWithCustomDemoValue() {
+        // Created 58 minutes before its 12:00 scheduled time (deep inside an early window), with
+        // missedWindowMinutes=2 — windowEndTime must be scheduledTime+2min, not creation-time+2min.
+        LocalDateTime scheduledTime = LocalDateTime.of(2026, 1, 1, 12, 0);
+        when(intakeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        scheduler.createIntakeForOccurrence(PATIENT_ID, Timing.NOON, scheduledTime, 2);
+
+        ArgumentCaptor<Intake> captor = ArgumentCaptor.forClass(Intake.class);
+        verify(intakeRepository).save(captor.capture());
+        Intake created = captor.getValue();
+        // windowStartTime is real "now" (~today) while scheduledTime is fixed at 2026-01-01 — if
+        // windowEndTime were (incorrectly) derived from windowStartTime instead of scheduledTime,
+        // this would be nowhere near 12:02 and the assertion below would fail loudly.
+        assertEquals(LocalDateTime.of(2026, 1, 1, 12, 2), created.getWindowEndTime());
     }
 
     @Test

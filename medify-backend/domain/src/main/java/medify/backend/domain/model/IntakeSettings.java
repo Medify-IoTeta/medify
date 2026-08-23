@@ -29,6 +29,15 @@ public class IntakeSettings {
     @Column(name = "early_window_minutes", nullable = false)
     private Integer earlyWindowMinutes;
 
+    /**
+     * How many minutes after the scheduled time a dose stays available before MissedIntakeScheduler
+     * sweeps it to MISSED. DEMO-ONLY control (see medify_app DemoScreen) for quickly testing the
+     * missed-dose flow without waiting an hour — default 60 keeps normal/production behavior
+     * unchanged. Replaces the previously hardcoded scheduledTime.plusHours(1) in ReminderScheduler.
+     */
+    @Column(name = "missed_window_minutes", nullable = false)
+    private Integer missedWindowMinutes;
+
     public LocalTime timeFor(Timing timing) {
         return switch (timing) {
             case MORNING -> morningTime;
