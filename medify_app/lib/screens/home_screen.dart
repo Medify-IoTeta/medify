@@ -12,6 +12,7 @@ import 'register_screen.dart';
 import 'edit_medicines_screen.dart';
 import 'fill_box_guide_screen.dart';
 import 'settings_screen.dart';
+import 'demo_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -54,13 +55,23 @@ class _HomeScreenState extends State<HomeScreen> {
       final medicines = results[0] as List<Medicine>;
       final intakes   = results[1] as List<Map<String, dynamic>>;
 
-      // One intake per timing window — last one wins if there's ever more than one.
-      final statusByTiming = <String, String>{};
+      // One intake per timing window — if more than one ever exists for the
+      // same day (backend doesn't guarantee list order), the highest id
+      // (most recently created) wins, not whichever happens to come last.
+      final latestByTiming = <String, Map<String, dynamic>>{};
       for (final intake in intakes) {
         final timing = (intake['timing'] as String?)?.toUpperCase();
-        final status = intake['status'] as String?;
-        if (timing != null && status != null) statusByTiming[timing] = status;
+        if (timing == null) continue;
+        final id = intake['id'];
+        final currentId = latestByTiming[timing]?['id'];
+        if (currentId == null || (id is num && currentId is num && id > currentId)) {
+          latestByTiming[timing] = intake;
+        }
       }
+      final statusByTiming = <String, String>{
+        for (final entry in latestByTiming.entries)
+          if (entry.value['status'] != null) entry.key: entry.value['status'] as String,
+      };
 
       if (!mounted) return;
       setState(() {
@@ -196,6 +207,34 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(builder: (context) => const SettingsScreen(isPatient: true)),
     );
+  }
+
+  // DEMO-ONLY: remove after exhibition
+  Future<void> _goToDemo() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => DemoScreen(onReset: _resetDemoWindow)),
+    );
+  }
+
+  // DEMO-ONLY: remove after exhibition — forces the window's local status back
+  // to pending immediately, bypassing _setWindowStatus's "never regress from
+  // taken" guard on purpose, so an already-completed window visually resets
+  // instead of staying stuck on "Taken" while the backend intake is reset.
+  // Does NOT send a reminder notification — this is a pure reset so the flow
+  // can be replayed; firing the actual reminder is a separate step.
+  Future<void> _resetDemoWindow(String timing) async {
+    if (mounted) {
+      setState(() {
+        for (int i = 0; i < _medicines.length; i++) {
+          final m = _medicines[i];
+          if (m.timePeriod.name.toUpperCase() == timing.toUpperCase()) {
+            _medicines[i] = m.copyWith(status: MedicationStatus.pending);
+          }
+        }
+      });
+    }
+    await _apiService.resetDemoIntake(timing);
   }
 
   // ── Polling ──────────────────────────────────────────────────
@@ -461,6 +500,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onEditMedicines: _goToEdit,
         onFillBox: _goToFillGuide,
         onSettings: _goToSettings,
+        onDemo: _goToDemo, // DEMO-ONLY: remove after exhibition
       ),
       body: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),

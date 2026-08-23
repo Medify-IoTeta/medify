@@ -39,9 +39,17 @@ public class NotificationController {
         return Map.of("status", "EMPTY");
     }
 
+    // DEMO-ONLY: revert after exhibition — resets today's intake for this
+    // timing back to PENDING without sending a notification.
     @PostMapping("/test")
-    public Map<String, String> triggerTest() {
-        reminderScheduler.sendReminder(Timing.MORNING);
+    public Map<String, String> triggerTest(@RequestParam(defaultValue = "MORNING") String timing) {
+        Timing t;
+        try {
+            t = Timing.valueOf(timing.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return Map.of("status", "ERROR", "message", "Unknown timing: " + timing);
+        }
+        reminderScheduler.resetIntakeForDemo(t);
         return Map.of("status", "OK");
     }
 

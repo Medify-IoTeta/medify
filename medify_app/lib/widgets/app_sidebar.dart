@@ -8,6 +8,7 @@ class AppSidebar extends StatelessWidget {
   final VoidCallback? onEditMedicines;
   final VoidCallback? onFillBox;
   final VoidCallback? onSettings;
+  final VoidCallback? onDemo;
 
   const AppSidebar({
     super.key,
@@ -15,6 +16,7 @@ class AppSidebar extends StatelessWidget {
     this.onEditMedicines,
     this.onFillBox,
     this.onSettings,
+    this.onDemo,
   });
 
   @override
@@ -87,6 +89,16 @@ class AppSidebar extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(context);
                     onSettings?.call();
+                  },
+                ),
+              // DEMO-ONLY: remove after exhibition
+              if (onDemo != null)
+                _SidebarItem(
+                  icon: Icons.science_outlined,
+                  label: 'For Demo Only',
+                  onTap: () {
+                    Navigator.pop(context);
+                    onDemo?.call();
                   },
                 ),
               const Divider(height: AppSpacing.xl),

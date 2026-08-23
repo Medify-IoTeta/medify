@@ -18,6 +18,7 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZonedDateTime;
@@ -69,7 +70,7 @@ public class ReminderScheduler {
             existing.cancel(false);
         }
         ScheduledFuture<?> future = taskScheduler.schedule(
-                () -> sendReminder(timing),
+                () -> fireScheduledReminder(timing),
                 triggerContext -> nextExecutionInstant(timing));
         scheduledTasks.put(timing, future);
     }
@@ -89,7 +90,34 @@ public class ReminderScheduler {
         return next.toInstant();
     }
 
+    // Used by snoozeByIntakeId/snoozeUntilByIntakeId — always creates a fresh
+    // Intake, leaving the postponed one as a distinct historical record. Not
+    // touched by the demo feature below.
     public void sendReminder(Timing timing) {
+        dispatchReminder(timing, false, true);
+    }
+
+    // The actual daily scheduled firing (reschedule() below). Reuses today's
+    // existing Intake for this timing if one is already there — normally a
+    // no-op difference (there's nothing to reuse yet) but this is what keeps
+    // a demo-reset row from being duplicated if the configured time is then
+    // changed to make this fire again the same day.
+    private void fireScheduledReminder(Timing timing) {
+        dispatchReminder(timing, true, true);
+    }
+
+    // DEMO-ONLY: revert after exhibition — resets today's existing Intake for
+    // this timing back to PENDING (reusing the row instead of accumulating a
+    // new one each time), but does NOT send a notification. This only gives
+    // the app a fresh state to replay the flow against; the actual reminder
+    // is still fired the normal way (real schedule or adjusted intake_settings
+    // times), which is why fireScheduledReminder above reuses this same row
+    // instead of creating a competing second one.
+    public void resetIntakeForDemo(Timing timing) {
+        dispatchReminder(timing, true, false);
+    }
+
+    private void dispatchReminder(Timing timing, boolean reuseTodaysIntake, boolean notify) {
         List<Medicine> medicines = medicineRepository.findByTiming(timing);
         if (medicines.isEmpty()) {
             logger.info("No medicines scheduled for {}", timing);
@@ -110,17 +138,37 @@ public class ReminderScheduler {
                 .orElse("");
 
         LocalDateTime now = LocalDateTime.now();
-        Intake intake = new Intake();
-        intake.setUserId(patientId);
-        intake.setTiming(timing);
+        Intake intake = null;
+        if (reuseTodaysIntake) {
+            LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+            LocalDateTime endOfDay = LocalDate.now().atTime(LocalTime.MAX);
+            intake = intakeRepository.findByUserIdBetween(patientId, startOfDay, endOfDay).stream()
+                    .filter(i -> i.getTiming() == timing)
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (intake == null) {
+            intake = new Intake();
+            intake.setUserId(patientId);
+            intake.setTiming(timing);
+        } else {
+            intake.setApprovedTime(null);
+            intake.setDispensedTime(null);
+            intake.setReleasedTime(null);
+            intake.setDeviceId(null);
+        }
         intake.setWindowStartTime(now);
         intake.setWindowEndTime(now.plusHours(1));
         intake.setStatus(IntakeStatus.PENDING);
         Intake saved = intakeRepository.save(intake);
 
         String timingLabel = timing.name().charAt(0) + timing.name().substring(1).toLowerCase();
-        logger.info("Sending {} reminder for: {}, intake id={}", timing, names, saved.getId());
-        notificationPort.send("Time to take your " + timingLabel + " medicines", saved.getId(), timing.name());
+        if (notify) {
+            logger.info("Sending {} reminder for: {}, intake id={}", timing, names, saved.getId());
+            notificationPort.send("Time to take your " + timingLabel + " medicines", saved.getId(), timing.name());
+        } else {
+            logger.info("Reset {} intake to PENDING for demo, intake id={}", timing, saved.getId());
+        }
     }
 
     public void snoozeByIntakeId(Long intakeId, int minutes) {

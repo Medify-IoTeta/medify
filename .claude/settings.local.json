@@ -12,7 +12,10 @@
       "Bash(docker exec *)",
       "Bash(git add *)",
       "Bash(git stash *)",
-      "Bash(git pull *)"
+      "Bash(git pull *)",
+      "Bash(git diff *)",
+      "Read(//tmp/**)",
+      "Bash(xargs grep -l -i \"intake_settings\")"
     ]
   }
 }

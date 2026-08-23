@@ -26,8 +26,8 @@ Never _throwApiException(http.Response response) {
 }
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
-  //static const String baseUrl = 'http://192.168.7.15:8080'; // for android over WiFi (if not using adb reverse)
+  static const String baseUrl = 'http://192.168.7.23:8080'; // for android over WiFi (if not using adb reverse)
+  //static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
 
   final AuthService _authService = AuthService();
 
@@ -123,6 +123,15 @@ class ApiService {
     }
 
     throw Exception('Failed to get notification: ${response.statusCode}');
+  }
+
+  // DEMO-ONLY: remove after exhibition — resets today's intake for this
+  // timing back to PENDING; does NOT send a reminder notification.
+  Future<void> resetDemoIntake(String timing) async {
+    final url = Uri.parse('$baseUrl/api/notification/test')
+        .replace(queryParameters: {'timing': timing});
+    final response = await http.post(url, headers: await _authHeaders());
+    if (response.statusCode != 200) _throwApiException(response);
   }
 
   Future<void> sendNotification(String message, {int? intakeId}) async {
