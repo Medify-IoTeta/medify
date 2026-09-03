@@ -1,6 +1,7 @@
 package medify.backend.api.controller;
 
 import medify.backend.api.auth.CurrentUserContext;
+import medify.backend.api.dto.MeResponse;
 import medify.backend.api.service.AuthService;
 import medify.backend.domain.model.User;
 import medify.backend.domain.model.UserType;
@@ -33,11 +34,12 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<User> me() {
+    public ResponseEntity<MeResponse> me() {
         User user = currentUserContext.getUserOrNull();
         if (user == null) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(user);
+        User linkedPatient = authService.resolveLinkedPatient(user).orElse(null);
+        return ResponseEntity.ok(MeResponse.of(user, linkedPatient));
     }
 }

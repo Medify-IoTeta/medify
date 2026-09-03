@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../utils/app_logger.dart';
 import '../widgets/app_sidebar.dart';
 import 'fill_box_guide_screen.dart';
+import 'intake_history_screen.dart';
 import 'settings_screen.dart';
 
 class CaregiverScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
   List<Map<String, dynamic>> _todayIntakes = [];
   List<Medicine> _medicines = [];
   List<Map<String, dynamic>> _alerts = [];
+  String? _patientName;
   bool _loading = true;
 
   @override
@@ -37,9 +39,13 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
         _apiService.getTodayIntakes(),
         _apiService.getMedicines(),
         _apiService.getNotificationsLog(widget.userId),
+        _apiService.getCurrentBackendUser(),
       ]);
 
       if (!mounted) return;
+      final me = results[3] as Map<String, dynamic>?;
+      final patientFirstName = me?['patientFirstName'] as String?;
+      final patientLastName = me?['patientLastName'] as String?;
       setState(() {
         _todayIntakes = results[0] as List<Map<String, dynamic>>;
         _medicines    = results[1] as List<Medicine>;
@@ -48,6 +54,10 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
             .toList()
           ..sort((a, b) =>
               (b['sentTime'] as String).compareTo(a['sentTime'] as String));
+        _patientName = [patientFirstName, patientLastName]
+            .where((n) => n != null && n.isNotEmpty)
+            .join(' ');
+        if (_patientName!.isEmpty) _patientName = null;
         _loading = false;
       });
     } catch (e) {
@@ -84,13 +94,29 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
     );
   }
 
+  Future<void> _goToHistory() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const IntakeHistoryScreen()),
+    );
+  }
+
   // ── Build ─────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Caregiver View'),
+        title: _patientName == null
+            ? const Text('Caregiver View')
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Caregiver View', style: AppTextStyles.caption),
+                  Text(_patientName!, style: AppTextStyles.h3),
+                ],
+              ),
         leading: Builder(
           builder: (context) => IconButton(
             icon: const Icon(Icons.menu),
@@ -111,7 +137,11 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
           ),
         ],
       ),
-      drawer: AppSidebar(onFillBox: _goToFillGuide, onSettings: _goToSettings),
+      drawer: AppSidebar(
+        onFillBox: _goToFillGuide,
+        onHistory: _goToHistory,
+        onSettings: _goToSettings,
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(

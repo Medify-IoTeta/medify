@@ -71,6 +71,7 @@ class ReminderSchedulerTest {
         when(intakeSettingsRepository.getSettings()).thenReturn(settingsWithNoon(scheduled, 60));
         when(intakeRepository.findByUserIdAndTimingAndScheduledDate(eq(PATIENT_ID), eq(Timing.NOON), any()))
                 .thenReturn(Optional.empty());
+        when(intakeRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         scheduler.reconcileTiming(Timing.NOON);
 

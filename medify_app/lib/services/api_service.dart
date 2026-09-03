@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../models/intake_history_entry.dart';
 import '../models/medicine.dart';
 import 'auth_service.dart';
 
@@ -26,7 +27,7 @@ Never _throwApiException(http.Response response) {
 }
 
 class ApiService {
-  static const String baseUrl = 'http://192.168.7.23:8080'; // for android over WiFi (if not using adb reverse)
+  static const String baseUrl = 'http://172.20.10.2:8080'; // for android over WiFi (if not using adb reverse)
   //static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
 
   final AuthService _authService = AuthService();
@@ -236,6 +237,21 @@ class ApiService {
     }
 
     throw Exception('Failed to get today intakes: ${response.statusCode}');
+  }
+
+  /// Same data for both the patient app and the caregiver view — the backend resolves the
+  /// patient from whichever token calls this. Most recent first.
+  Future<List<IntakeHistoryEntry>> getIntakeHistory({int days = 5}) async {
+    final url = Uri.parse('$baseUrl/api/intakes/history')
+        .replace(queryParameters: {'days': '$days'});
+    final response = await http.get(url, headers: await _authHeaders());
+
+    if (response.statusCode == 200) {
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.map((json) => IntakeHistoryEntry.fromJson(json)).toList();
+    }
+
+    throw Exception('Failed to get intake history: ${response.statusCode}');
   }
 
   // ── Medicine management ───────────────────────────────────────

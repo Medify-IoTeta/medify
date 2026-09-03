@@ -42,8 +42,8 @@ int currentSlot = 0;
 int stepIndex = 0;
 
 // ── Wi-Fi ───────────────────────────────────────────────────────
-char ssid[] = "Roywifi";
-char pass[] = "0523774443";
+char ssid[] = "NettaS";
+char pass[] = "12345678";
 
 // ── Backend / device identity ──────────────────────────────────
 // Must match a row in the backend's `devices` table (see
@@ -56,7 +56,7 @@ char pass[] = "0523774443";
 // This is a LAN IP, not a public host, and it drifts with the dev network
 // (DHCP re-lease, switching networks, etc.) — keep it in sync manually
 // until there's a stable, publicly reachable host.
-const char* BACKEND_HOST = "192.168.7.23";
+const char* BACKEND_HOST = "172.20.10.2";
 const uint16_t BACKEND_PORT = 8080;
 const char* DEVICE_ID = "pillbox-01";
 const char* DEVICE_TOKEN = "medify-dev-secret-001";

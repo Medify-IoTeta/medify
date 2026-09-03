@@ -11,6 +11,7 @@ import '../widgets/progress_ring.dart';
 import 'register_screen.dart';
 import 'edit_medicines_screen.dart';
 import 'fill_box_guide_screen.dart';
+import 'intake_history_screen.dart';
 import 'settings_screen.dart';
 import 'demo_screen.dart'; // DEMO-ONLY: remove after exhibition
 
@@ -303,6 +304,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const SettingsScreen(isPatient: true)),
+    );
+  }
+
+  Future<void> _goToHistory() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const IntakeHistoryScreen()),
     );
   }
 
@@ -629,6 +637,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onAddMedicine: _goToRegister,
         onEditMedicines: _goToEdit,
         onFillBox: _goToFillGuide,
+        onHistory: _goToHistory,
         onSettings: _goToSettings,
         onDemo: _goToDemo, // DEMO-ONLY: remove after exhibition
       ),

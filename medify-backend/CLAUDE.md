@@ -91,7 +91,8 @@ All endpoints under `/api/*` with `@CrossOrigin(origins = "*")`; all require the
 | POST | `/api/notification` | Send user response (confirm/snooze/skip) |
 | GET | `/api/medications` | List all medicines |
 | POST | `/api/medications` | Register a new medicine |
-| GET | `/api/intakes/today` | Today's intakes for the resolved patient |
+| GET | `/api/intakes/today` | Today's intakes for the resolved patient, plus any still-unresolved intake carried over from a previous day — SKIPPED is a terminal outcome and is not carried over (see `IntakeService.getToday`) |
+| GET | `/api/intakes/history?days=5` | Last `days` calendar days of intake history (today inclusive), most recent first — each row is an `IntakeHistoryEntry` with a computed `outcome` (TAKEN_ON_TIME/TAKEN_AFTER_POSTPONED/TAKEN_AFTER_MISSED/MISSED/SKIPPED/INCOMPLETE/PENDING/APPROVED/POSTPONED/DISPENSING/DISPENSED) and `latenessMinutes`. Same endpoint for both patient and caregiver (resolved via `AuthService.resolvePatientId`). Only occurrences with an actual Intake row are returned — nothing is synthesized for a day/timing that never got one |
 | PATCH | `/api/intakes/{id}/approve` | User approved intake |
 | POST | `/api/intakes/{id}/dispense` | Relays a dispense command to the patient's device over WS; intake → DISPENSING on ack, `409` if device unreachable |
 | PATCH | `/api/intakes/{id}/skip` | User skipped intake |

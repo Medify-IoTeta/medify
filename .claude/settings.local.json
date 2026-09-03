@@ -15,7 +15,9 @@
       "Bash(git pull *)",
       "Bash(git diff *)",
       "Read(//tmp/**)",
-      "Bash(xargs grep -l -i \"intake_settings\")"
+      "Bash(xargs grep -l -i \"intake_settings\")",
+      "Bash(mvn -q -pl domain -am test -Dtest=ReminderSchedulerTest)",
+      "Bash(echo \"EXIT CODE: $?\")"
     ]
   }
 }

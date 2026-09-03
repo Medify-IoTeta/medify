@@ -13,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Optional;
+
 @Service
 public class AuthService {
 
@@ -92,5 +94,21 @@ public class AuthService {
                 .findFirst()
                 .map(link -> link.getId().getPatientId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Caregiver is not linked to a patient"));
+    }
+
+    /**
+     * The patient a caregiver is linked to, for display purposes (e.g. "Caring for X" on the
+     * caregiver screen) — empty for a patient account, or a caregiver not yet linked to anyone,
+     * rather than throwing like {@link #resolvePatientId} does; this is informational, not a
+     * precondition for an action.
+     */
+    public Optional<User> resolveLinkedPatient(User currentUser) {
+        if (currentUser.getType() != UserType.CAREGIVER) {
+            return Optional.empty();
+        }
+        return caregiverLinkRepository.findByCaregiverId(currentUser.getId()).stream()
+                .findFirst()
+                .map(link -> link.getId().getPatientId())
+                .flatMap(userRepository::findById);
     }
 }

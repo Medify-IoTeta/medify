@@ -1,6 +1,7 @@
 package medify.backend.api.controller;
 
 import medify.backend.api.auth.CurrentUserContext;
+import medify.backend.api.dto.IntakeHistoryEntry;
 import medify.backend.api.service.AuthService;
 import medify.backend.api.service.IntakeOrchestrationService;
 import medify.backend.api.service.IntakeService;
@@ -36,6 +37,15 @@ public class IntakeController {
     @GetMapping("/today")
     public List<Intake> getToday() {
         return intakeService.getToday(authService.resolvePatientId(currentUserContext.getUser()));
+    }
+
+    /**
+     * Last {@code days} calendar days of intake history (today inclusive), same data for both the
+     * patient app and the caregiver view — see IntakeService.getHistory.
+     */
+    @GetMapping("/history")
+    public List<IntakeHistoryEntry> getHistory(@RequestParam(defaultValue = "5") int days) {
+        return intakeService.getHistory(authService.resolvePatientId(currentUserContext.getUser()), days);
     }
 
     @GetMapping("/{id}")

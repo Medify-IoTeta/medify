@@ -7,6 +7,7 @@ class AppSidebar extends StatelessWidget {
   final VoidCallback? onAddMedicine;
   final VoidCallback? onEditMedicines;
   final VoidCallback? onFillBox;
+  final VoidCallback? onHistory;
   final VoidCallback? onSettings;
   final VoidCallback? onDemo;
 
@@ -15,6 +16,7 @@ class AppSidebar extends StatelessWidget {
     this.onAddMedicine,
     this.onEditMedicines,
     this.onFillBox,
+    this.onHistory,
     this.onSettings,
     this.onDemo,
   });
@@ -80,6 +82,15 @@ class AppSidebar extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(context);
                     onFillBox?.call();
+                  },
+                ),
+              if (onHistory != null)
+                _SidebarItem(
+                  icon: Icons.history,
+                  label: 'Intake History',
+                  onTap: () {
+                    Navigator.pop(context);
+                    onHistory?.call();
                   },
                 ),
               if (onSettings != null)

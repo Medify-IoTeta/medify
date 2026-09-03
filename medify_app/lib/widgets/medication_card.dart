@@ -107,7 +107,7 @@ class StatusBadge extends StatelessWidget {
       case MedicationStatus.pending:    return 'Upcoming';
       case MedicationStatus.missed:     return 'Missed';
       case MedicationStatus.dispensing: return 'Dispensing';
-      case MedicationStatus.dispensed:  return 'Confirm removal';
+      case MedicationStatus.dispensed:  return 'Confirm';
       case MedicationStatus.incomplete: return 'Incomplete';
       case MedicationStatus.postponed:  return 'Postponed';
     }

@@ -1,5 +1,6 @@
 package medify.backend.api.service;
 
+import medify.backend.api.dto.IntakeHistoryEntry;
 import medify.backend.domain.model.Intake;
 import medify.backend.domain.model.IntakeActionResult;
 import medify.backend.domain.model.IntakeStatus;
@@ -13,6 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -56,10 +59,59 @@ public class IntakeService {
         return intakeRepository.findByUserIdBetween(userId, from, to);
     }
 
+    /**
+     * Today's intakes, plus any still-unresolved intake left over from a previous day (a MISSED
+     * window, or one still sitting PENDING/APPROVED/POSTPONED/DISPENSING/DISPENSED/INCOMPLETE) so the
+     * patient can still see and complete it once the calendar day rolls over. Uses the same
+     * {@link IntakeStatus#UNRESOLVED} definition the blocking logic
+     * (IntakeOrchestrationService/ReminderScheduler) already relies on, on purpose: SKIPPED is a
+     * deliberate, terminal "this dose was intentionally skipped" outcome (see IntakeService.skip) —
+     * it's neither actionable nor still expected to be taken, so it must NOT be carried over just
+     * because it isn't TAKEN. A carried-over intake drops out once it resolves (TAKEN or SKIPPED) —
+     * it simply stops matching UNRESOLVED on the next call. Today's own intakes are unaffected by
+     * this and keep showing regardless of status, same as before. Carried-over intakes are appended
+     * last so that if a new occurrence for the same timing was already created for today (and is
+     * sitting blocked behind the older one — see IntakeOrchestrationService), callers that key by
+     * timing and take "last wins" (the Flutter app's per-window status map) surface the older,
+     * still-unresolved one the user actually needs to act on.
+     */
     public List<Intake> getToday(Long userId) {
         LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
         LocalDateTime endOfDay = LocalDate.now().atTime(LocalTime.MAX);
-        return intakeRepository.findByUserIdBetween(userId, startOfDay, endOfDay);
+        List<Intake> today = intakeRepository.findByUserIdBetween(userId, startOfDay, endOfDay);
+
+        List<Intake> carriedOver = intakeRepository
+                .findUnresolvedOrderByScheduledTimeAsc(userId, IntakeStatus.UNRESOLVED)
+                .stream()
+                .filter(intake -> intake.getScheduledTime().isBefore(startOfDay))
+                .toList();
+
+        if (carriedOver.isEmpty()) {
+            return today;
+        }
+        List<Intake> combined = new ArrayList<>(today);
+        combined.addAll(carriedOver);
+        return combined;
+    }
+
+    /**
+     * Read-only history projection for both the patient app and the caregiver view — same
+     * endpoint, same computed outcomes, so the two never disagree about what happened to a dose.
+     * Covers the last {@code days} calendar days including today (today's still-unresolved
+     * windows come back with their live status via {@link IntakeHistoryEntry.Outcome} rather than
+     * being forced into a taken/missed bucket). Only occurrences that actually have an Intake row
+     * are returned — no placeholder is synthesized for a day/timing that never got one (e.g. the
+     * medicine didn't exist yet, or the server was down during that early window). Most recent
+     * first.
+     */
+    public List<IntakeHistoryEntry> getHistory(Long userId, int days) {
+        LocalDateTime end = LocalDate.now().atTime(LocalTime.MAX);
+        LocalDateTime start = LocalDate.now().minusDays(days - 1L).atStartOfDay();
+        return intakeRepository.findByUserIdBetween(userId, start, end)
+                .stream()
+                .sorted(Comparator.comparing(Intake::getScheduledTime).reversed())
+                .map(IntakeHistoryEntry::from)
+                .toList();
     }
 
     public Intake approve(Long id) {
