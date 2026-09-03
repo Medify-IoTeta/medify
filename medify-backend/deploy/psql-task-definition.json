@@ -1,0 +1,26 @@
+{
+  "family": "medify-psql-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::865394826818:role/LabRole",
+  "taskRoleArn": "arn:aws:iam::865394826818:role/LabRole",
+  "containerDefinitions": [
+    {
+      "name": "psql",
+      "image": "postgres:15",
+      "essential": true,
+      "command": ["sleep", "3600"],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/medify-psql",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

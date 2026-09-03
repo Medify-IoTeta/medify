@@ -43,4 +43,5 @@ build/
 .env.*
 !.env.example
 secrets/
+deploy/task-definition.resolved.json
 

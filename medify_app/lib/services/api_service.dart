@@ -27,8 +27,12 @@ Never _throwApiException(http.Response response) {
 }
 
 class ApiService {
-  static const String baseUrl = 'http://172.20.10.2:8080'; // for android over WiFi (if not using adb reverse)
-  //static const String baseUrl = 'http://localhost:8080'; // works for android via `adb reverse tcp:8080 tcp:8080` over USB
+  // Override at build time: flutter run --dart-define=API_BASE_URL=http://<alb-dns-name>
+  // Defaults to the LAN dev backend (Android over WiFi) when not overridden.
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://172.20.10.2:8080',
+  );
 
   final AuthService _authService = AuthService();
 

@@ -50,16 +50,14 @@ char pass[] = "12345678";
 // medify-backend V16__create_devices_table.sql for the seeded dev device).
 // deviceId/token are provisioned once per physical unit — do not commit a
 // real device's token to a shared repo.
-// BACKEND_HOST is the dev machine's current LAN IPv4 (check with `ipconfig`
-// on Windows / `ifconfig`/`ip addr` on Mac/Linux) — the app's `adb reverse`
-// localhost value doesn't apply here since the box isn't USB-tethered.
-// This is a LAN IP, not a public host, and it drifts with the dev network
-// (DHCP re-lease, switching networks, etc.) — keep it in sync manually
-// until there's a stable, publicly reachable host.
-const char* BACKEND_HOST = "172.20.10.2";
-const uint16_t BACKEND_PORT = 8080;
+// BACKEND_HOST is the AWS ALB's DNS name (port 80 -- the ALB listener, which
+// forwards to the container's 8080 internally; the container port itself
+// isn't reachable directly from outside the ECS security group). Plain HTTP,
+// not HTTPS/WSS -- no TLS in front of this Learner Lab deployment yet.
+const char* BACKEND_HOST = "medify-alb-14738975.us-east-1.elb.amazonaws.com";
+const uint16_t BACKEND_PORT = 80;
 const char* DEVICE_ID = "pillbox-01";
-const char* DEVICE_TOKEN = "medify-dev-secret-001";
+const char* DEVICE_TOKEN = "25e229c56d9448b8a74de53d66649cf112671da4a2ac5037d47a78fbcb6af42c";
 
 WebSocketsClient webSocket;
 bool wsConnected = false;
