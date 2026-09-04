@@ -20,6 +20,11 @@ RUN mvn -q -B -pl app -am clean package -DskipTests
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
+# tzdata: the JDK bundles its own IANA timezone database for java.time, so TZ=Asia/Jerusalem
+# (set via the ECS task definition) likely works without this -- but Alpine's base image omits
+# tzdata by default, and this removes any doubt about DST rule resolution for a near-zero cost.
+RUN apk add --no-cache tzdata
+
 RUN addgroup -S medify && adduser -S medify -G medify
 COPY --from=build /build/app/target/*.jar app.jar
 RUN chown medify:medify app.jar

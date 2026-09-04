@@ -21,6 +21,7 @@
         { "name": "DB_USERNAME", "value": "medifyadmin" },
         { "name": "DB_PASSWORD", "value": "__DB_PASSWORD__" },
         { "name": "SERVER_PORT", "value": "8080" },
+        { "name": "TZ", "value": "Asia/Jerusalem" },
         { "name": "FIREBASE_CREDENTIALS_JSON", "value": "__FIREBASE_CREDENTIALS_JSON__" }
       ],
       "logConfiguration": {
