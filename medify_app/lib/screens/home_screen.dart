@@ -37,6 +37,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// with _earlyWindowMinutes) for deciding whether a PENDING window is inside its Early Window.
   /// Never guessed from local UI state.
   final Map<String, DateTime> _scheduledTimeByTiming = {};
+  /// Still-unresolved intakes carried over from a previous day — kept entirely separate from
+  /// today's per-timing maps above so one can never overwrite the other, even when both exist for
+  /// the same timing at once (e.g. yesterday's EVENING is still unresolved and today's own EVENING
+  /// intake has already been created too).
+  List<Map<String, dynamic>> _previousDaysUnresolved = [];
   int _earlyWindowMinutes = 60;
   bool _takeNowInFlight = false;
   /// Re-entrancy guard for _refreshIntakeStatuses — it's now called from several places that can
@@ -94,13 +99,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _apiService.getTodayIntakes(),
       ]);
       final medicines = results[0] as List<Medicine>;
-      final intakes   = results[1] as List<Map<String, dynamic>>;
+      final todayIntakes = results[1] as TodayIntakes;
 
-      // One intake per timing window — last one wins if there's ever more than one.
+      // One intake per timing window — last one wins if there's ever more than one. Only today's
+      // own intakes populate these maps now; previous-day carry-overs live in
+      // _previousDaysUnresolved instead, so they can never overwrite today's own window.
       final statusByTiming = <String, String>{};
       final idByTiming = <String, int>{};
       final scheduledTimeByTiming = <String, DateTime>{};
-      for (final intake in intakes) {
+      for (final intake in todayIntakes.today) {
         final timing = (intake['timing'] as String?)?.toUpperCase();
         final status = intake['status'] as String?;
         final rawId = intake['id'];
@@ -123,6 +130,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _scheduledTimeByTiming
           ..clear()
           ..addAll(scheduledTimeByTiming);
+        _previousDaysUnresolved = todayIntakes.previousDaysUnresolved;
         _medicines.addAll(medicines.map((m) {
           final mapped = _mapIntakeStatus(statusByTiming[m.timePeriod.name.toUpperCase()]);
           return mapped != null ? m.copyWith(status: mapped) : m;
@@ -142,11 +150,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_refreshingIntakes) return;
     _refreshingIntakes = true;
     try {
-      final intakes = await _apiService.getTodayIntakes();
+      final todayIntakes = await _apiService.getTodayIntakes();
       final statusByTiming = <String, String>{};
       final idByTiming = <String, int>{};
       final scheduledTimeByTiming = <String, DateTime>{};
-      for (final intake in intakes) {
+      for (final intake in todayIntakes.today) {
         final timing = (intake['timing'] as String?)?.toUpperCase();
         final status = intake['status'] as String?;
         final rawId = intake['id'];
@@ -168,6 +176,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _scheduledTimeByTiming
           ..clear()
           ..addAll(scheduledTimeByTiming);
+        _previousDaysUnresolved = todayIntakes.previousDaysUnresolved;
         for (int i = 0; i < _medicines.length; i++) {
           final m = _medicines[i];
           final mapped = _mapIntakeStatus(statusByTiming[m.timePeriod.name.toUpperCase()]);
@@ -209,12 +218,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return 'Good Evening';
   }
 
-  String get _formattedDate {
-    final now = DateTime.now();
+  String get _formattedDate => _formatDate(DateTime.now());
+
+  /// Shared with previous-day cards, so a carried-over intake's original date reads in the same
+  /// format as the header's "today" date.
+  String _formatDate(DateTime dt) {
     const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     const months = ['January', 'February', 'March', 'April', 'May', 'June',
                     'July', 'August', 'September', 'October', 'November', 'December'];
-    return '${days[now.weekday - 1]}, ${months[now.month - 1]} ${now.day}';
+    return '${days[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}';
   }
 
   List<Medicine> get _upcoming =>
@@ -474,7 +486,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// now" buttons, the reminder dialog's OK, and a proactive early-window take-now all funnel
   /// through this. It never decides eligibility itself: the backend's shared
   /// IntakeOrchestrationService does, and this just renders whatever outcome comes back.
-  Future<void> _performTakeNow({int? intakeId, String? timingHint}) async {
+  Future<void> _performTakeNow({int? intakeId, String? timingHint, bool isPreviousDay = false}) async {
     if (_takeNowInFlight) return; // guards against double-tap; the backend also protects itself
     setState(() => _takeNowInFlight = true);
     try {
@@ -487,16 +499,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final rawId = startedIntake?['id'];
         final startedId = rawId is num ? rawId.toInt() : (rawId != null ? int.tryParse('$rawId') : null);
 
-        _setWindowStatus(startedTiming, MedicationStatus.dispensing);
+        // Previous-day cards mutate their own entry in _previousDaysUnresolved, never
+        // _medicines/_setWindowStatus — today's own intake for the same timing can exist
+        // simultaneously (e.g. yesterday's EVENING still unresolved alongside today's own EVENING),
+        // and _setWindowStatus would otherwise wrongly touch today's medicines too.
+        if (isPreviousDay) {
+          _setPreviousDayCardStatus(startedId, 'DISPENSING');
+        } else {
+          _setWindowStatus(startedTiming, MedicationStatus.dispensing);
+        }
 
         final finalStatus = startedId != null ? await _pollIntakeUntilTaken(startedId, startedTiming) : null;
         if (finalStatus == 'TAKEN') {
-          _setWindowStatus(startedTiming, MedicationStatus.taken);
+          if (isPreviousDay) {
+            _removePreviousDayCard(startedId);
+          } else {
+            _setWindowStatus(startedTiming, MedicationStatus.taken);
+          }
           _showResultSnack('Pills dispensed — intake recorded', success: true);
         } else {
           // Still DISPENSED (or unknown) when we stopped watching — no timeout or failure state
           // here by design. It'll show as taken once the IR sensor confirms.
-          _setWindowStatus(startedTiming, MedicationStatus.dispensed);
+          if (isPreviousDay) {
+            _setPreviousDayCardStatus(startedId, 'DISPENSED');
+          } else {
+            _setWindowStatus(startedTiming, MedicationStatus.dispensed);
+          }
           _showResultSnack('Dispensed — remove the medication to complete', success: true);
         }
         return;
@@ -571,6 +599,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _medicines[i] = m.copyWith(status: status);
         }
       }
+    });
+  }
+
+  int? _intakeMapId(Map<String, dynamic> intake) {
+    final id = intake['id'];
+    return id is num ? id.toInt() : int.tryParse('$id');
+  }
+
+  /// Optimistic local update to one previous-day card while its take-now is in flight — the next
+  /// backend refresh will confirm it, same as _setWindowStatus does for today's medicines.
+  void _setPreviousDayCardStatus(int? intakeId, String status) {
+    if (!mounted || intakeId == null) return;
+    setState(() {
+      final idx = _previousDaysUnresolved.indexWhere((i) => _intakeMapId(i) == intakeId);
+      if (idx != -1) {
+        _previousDaysUnresolved[idx] = {..._previousDaysUnresolved[idx], 'status': status};
+      }
+    });
+  }
+
+  /// Drops a previous-day card the moment it's confirmed TAKEN, rather than waiting for the next
+  /// poll tick — the backend will also simply stop returning it from then on.
+  void _removePreviousDayCard(int? intakeId) {
+    if (!mounted || intakeId == null) return;
+    setState(() {
+      _previousDaysUnresolved.removeWhere((i) => _intakeMapId(i) == intakeId);
     });
   }
 
@@ -690,7 +744,95 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         .toList();
 
     return ListView(
-      children: groups.map((e) => _buildTimingGroup(e.key, e.value)).toList(),
+      children: [
+        // Previous days section only renders while there's still something unresolved in it —
+        // once the last carried-over intake resolves, this simply stops appearing (the backend
+        // stops returning it, same mechanism that already drives everything else here).
+        if (_previousDaysUnresolved.isNotEmpty) ..._buildPreviousDaysSection(),
+        Padding(
+          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+          child: Text('Today', style: AppTextStyles.h3),
+        ),
+        // Today's 3 windows always render independently of Previous days — a previous-day intake
+        // never replaces or hides today's own window for the same timing.
+        ...groups.map((e) => _buildTimingGroup(e.key, e.value)),
+      ],
+    );
+  }
+
+  List<Widget> _buildPreviousDaysSection() {
+    // Oldest-first, matching the backend's own ordering (IntakeService.getToday) — no client-side
+    // re-sort needed.
+    return [
+      Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+        child: Text('Previous days', style: AppTextStyles.h3),
+      ),
+      ..._previousDaysUnresolved.map(_buildPreviousDayCard),
+      const SizedBox(height: AppSpacing.xxl),
+    ];
+  }
+
+  /// One still-unresolved intake carried over from an earlier day. Deliberately not built from
+  /// _medicines/the per-timing maps (those represent today's own windows only) — this renders
+  /// straight off the raw intake map, including its own original date, since a previous-day card
+  /// and today's card for the same timing can exist and be shown at the same time.
+  Widget _buildPreviousDayCard(Map<String, dynamic> intake) {
+    final timing = (intake['timing'] as String?)?.toUpperCase() ?? '';
+    final status = intake['status'] as String?;
+    final intakeId = _intakeMapId(intake);
+    final scheduledTime = parseBackendDateTime(intake['scheduledTime']);
+    final color = _timingColor(timing);
+    final label = timing.isEmpty ? '' : timing[0] + timing.substring(1).toLowerCase();
+    final cardStatus = _mapIntakeStatus(status) ?? MedicationStatus.pending;
+    final meds = _medicinesForTiming(timing);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppRadius.lgBorder,
+        border: Border.all(color: AppColors.border),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: AppRadius.mdBorder,
+            ),
+            child: Icon(_timingIcon(timing), color: color, size: 20),
+          ),
+          title: Row(
+            children: [
+              Expanded(child: Text(label, style: AppTextStyles.bodyLg)),
+              const SizedBox(width: AppSpacing.sm),
+              StatusBadge(status: cardStatus),
+            ],
+          ),
+          // The original date — the whole reason this section exists separately from Today, so
+          // the user can tell this isn't today's own window.
+          subtitle: scheduledTime != null
+              ? Text(_formatDate(scheduledTime), style: AppTextStyles.bodySm)
+              : null,
+          children: [
+            const Divider(height: 1),
+            ...meds.map((m) => MedicationCard(medicine: m)),
+            _buildIntakeAction(
+              status: status,
+              intakeId: intakeId,
+              timing: timing,
+              alwaysEligibleIfPending: true,
+              isPreviousDay: true,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
     );
   }
 
@@ -734,7 +876,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             const Divider(height: 1),
             ...meds.map((m) => MedicationCard(medicine: m)),
-            _buildWindowAction(timing),
+            _buildIntakeAction(
+              status: _rawStatusByTiming[timing],
+              intakeId: _intakeIdByTiming[timing],
+              timing: timing,
+            ),
             const SizedBox(height: AppSpacing.sm),
           ],
         ),
@@ -742,19 +888,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Status-driven action row for a timing window, backed by the real backend status (not the
-  /// collapsed MedicationStatus). "Take now" shows only for MISSED, POSTPONED, or a PENDING window
-  /// that's actually inside its Early Window right now (checked against the real scheduledTime +
-  /// earlyWindowMinutes, not guessed) — never for APPROVED, and never for a PENDING window before
-  /// its Early Window opens. This is presentation-only: the backend's take-now endpoint remains the
-  /// real eligibility check regardless of what this shows.
-  Widget _buildWindowAction(String timing) {
-    final status = _rawStatusByTiming[timing];
+  /// Status-driven action row, shared by today's windows and previous-day cards, backed by the
+  /// real backend status (not the collapsed MedicationStatus). "Take now" shows for MISSED,
+  /// POSTPONED, or a PENDING window that's actually inside its Early Window right now (checked
+  /// against the real scheduledTime + earlyWindowMinutes, not guessed) — never for APPROVED, and
+  /// never for a PENDING window before its Early Window opens. [alwaysEligibleIfPending] skips that
+  /// Early Window check entirely — used for previous-day cards, which are by definition already
+  /// past their original window and must never be blocked by a restriction that only makes sense
+  /// for a window that hasn't opened yet today. This is presentation-only: the backend's take-now
+  /// endpoint remains the real eligibility check regardless of what this shows.
+  Widget _buildIntakeAction({
+    required String? status,
+    required int? intakeId,
+    required String timing,
+    bool alwaysEligibleIfPending = false,
+    bool isPreviousDay = false,
+  }) {
     if (status == null) return const SizedBox.shrink();
 
     final showTakeNow = status == 'MISSED' ||
         status == 'POSTPONED' ||
-        (status == 'PENDING' && _isPendingWithinEarlyWindow(timing));
+        (status == 'PENDING' &&
+            (alwaysEligibleIfPending || _isPendingWithinEarlyWindow(timing)));
 
     if (showTakeNow) {
       final label = switch (status) {
@@ -769,7 +924,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: OutlinedButton(
             onPressed: _takeNowInFlight
                 ? null
-                : () => _performTakeNow(intakeId: _intakeIdByTiming[timing], timingHint: timing),
+                : () => _performTakeNow(
+                      intakeId: intakeId,
+                      timingHint: timing,
+                      isPreviousDay: isPreviousDay,
+                    ),
             child: Text(label),
           ),
         ),

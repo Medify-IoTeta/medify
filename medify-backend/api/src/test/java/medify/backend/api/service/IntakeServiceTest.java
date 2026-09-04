@@ -1,6 +1,7 @@
 package medify.backend.api.service;
 
 import medify.backend.api.dto.IntakeHistoryEntry;
+import medify.backend.api.dto.TodayIntakesResponse;
 import medify.backend.domain.model.Intake;
 import medify.backend.domain.model.IntakeActionResult;
 import medify.backend.domain.model.IntakeStatus;
@@ -63,9 +64,10 @@ class IntakeServiceTest {
         when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(1L, IntakeStatus.UNRESOLVED))
                 .thenReturn(List.of(yesterdayMissed));
 
-        List<Intake> result = service.getToday(1L);
+        TodayIntakesResponse result = service.getToday(1L);
 
-        assertEquals(List.of(todayPending, yesterdayMissed), result);
+        assertEquals(List.of(todayPending), result.today());
+        assertEquals(List.of(yesterdayMissed), result.previousDaysUnresolved());
     }
 
     @Test
@@ -77,9 +79,10 @@ class IntakeServiceTest {
         // excludes both (see IntakeStatusTest), so it simply stops being a candidate for carry-over.
         when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(eq(1L), any())).thenReturn(List.of());
 
-        List<Intake> result = service.getToday(1L);
+        TodayIntakesResponse result = service.getToday(1L);
 
-        assertEquals(List.of(todayPending), result);
+        assertEquals(List.of(todayPending), result.today());
+        assertEquals(List.of(), result.previousDaysUnresolved());
     }
 
     @Test
@@ -108,9 +111,10 @@ class IntakeServiceTest {
         // Not a carry-over — it's scheduled today, so it must not be duplicated in the result.
         when(intakeRepository.findUnresolvedOrderByScheduledTimeAsc(eq(1L), any())).thenReturn(List.of(todayMissed));
 
-        List<Intake> result = service.getToday(1L);
+        TodayIntakesResponse result = service.getToday(1L);
 
-        assertEquals(List.of(todayMissed), result);
+        assertEquals(List.of(todayMissed), result.today());
+        assertEquals(List.of(), result.previousDaysUnresolved());
     }
 
     @Test
@@ -243,6 +247,19 @@ class IntakeServiceTest {
     @Test
     void markTakenOnlyFromDispensedAndCancelsPostponeTimer() {
         when(intakeRepository.findById(1L)).thenReturn(Optional.of(intake(1L, IntakeStatus.DISPENSED)));
+
+        Intake result = service.markTaken(1L);
+
+        assertEquals(IntakeStatus.TAKEN, result.getStatus());
+        verify(reminderScheduler).cancelPostponeReminder(1L);
+    }
+
+    @Test
+    void markTakenAlsoAllowedFromIncomplete() {
+        // A late IR confirmation on an intake MissedIntakeScheduler.detectIncomplete already swept
+        // to INCOMPLETE must still be accepted as a real TAKEN outcome, not dropped — the patient
+        // removing the pills late is still a real event, not something to leave permanently stuck.
+        when(intakeRepository.findById(1L)).thenReturn(Optional.of(intake(1L, IntakeStatus.INCOMPLETE)));
 
         Intake result = service.markTaken(1L);
 

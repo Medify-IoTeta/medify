@@ -47,7 +47,9 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
       final patientFirstName = me?['patientFirstName'] as String?;
       final patientLastName = me?['patientLastName'] as String?;
       setState(() {
-        _todayIntakes = results[0] as List<Map<String, dynamic>>;
+        // Only today's own intakes — previous-day unresolved intakes are deliberately not
+        // surfaced here; the rolling 24h Alerts feed and Intake History already cover them.
+        _todayIntakes = (results[0] as TodayIntakes).today;
         _medicines    = results[1] as List<Medicine>;
         _alerts = (results[2] as List<Map<String, dynamic>>)
             .where((n) => n['type'] == 'MISSED_INTAKE' || n['type'] == 'INCOMPLETE_INTAKE')
@@ -441,16 +443,24 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
     final message  = alert['message']  as String? ?? '';
     final sentTime = alert['sentTime'] as String? ?? '';
     final isIncomplete = alert['type'] == 'INCOMPLETE_INTAKE';
+    // The intake this alert refers to may have since been taken (a late approval, or — for
+    // INCOMPLETE — a late IR confirmation now that markTaken accepts that path too). Still shown
+    // (not removed) until the alert itself ages out of the 24h window, just relabeled in orange
+    // instead of the usual red so a caregiver can tell it's since been resolved at a glance.
+    final resolvedAsTaken = alert['resolvedAsTaken'] as bool? ?? false;
     final icon = isIncomplete ? Icons.hourglass_disabled : Icons.warning_amber_rounded;
-    final label = isIncomplete ? 'Incomplete' : 'Missed';
+    final label = resolvedAsTaken
+        ? (isIncomplete ? 'Taken after incomplete' : 'Taken after missed')
+        : (isIncomplete ? 'Incomplete' : 'Missed');
+    final color = resolvedAsTaken ? AppColors.warning : AppColors.error;
 
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.error.withValues(alpha: 0.05),
+        color: color.withValues(alpha: 0.05),
         borderRadius: AppRadius.lgBorder,
-        border: Border.all(color: AppColors.error.withValues(alpha: 0.25)),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -459,10 +469,10 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: AppColors.error.withValues(alpha: 0.12),
+              color: color.withValues(alpha: 0.12),
               borderRadius: AppRadius.mdBorder,
             ),
-            child: Icon(icon, color: AppColors.error, size: 18),
+            child: Icon(icon, color: color, size: 18),
           ),
           const SizedBox(width: AppSpacing.md),
           Expanded(
@@ -472,15 +482,15 @@ class _CaregiverScreenState extends State<CaregiverScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                   decoration: BoxDecoration(
-                    color: AppColors.error.withValues(alpha: 0.15),
+                    color: color.withValues(alpha: 0.15),
                     borderRadius: AppRadius.smBorder,
                   ),
                   child: Text(
                     label,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.error,
+                      color: color,
                     ),
                   ),
                 ),

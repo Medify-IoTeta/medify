@@ -1,6 +1,7 @@
 package medify.backend.api.service;
 
 import medify.backend.api.dto.IntakeHistoryEntry;
+import medify.backend.api.dto.TodayIntakesResponse;
 import medify.backend.domain.model.Intake;
 import medify.backend.domain.model.IntakeActionResult;
 import medify.backend.domain.model.IntakeStatus;
@@ -14,7 +15,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
@@ -60,38 +60,32 @@ public class IntakeService {
     }
 
     /**
-     * Today's intakes, plus any still-unresolved intake left over from a previous day (a MISSED
-     * window, or one still sitting PENDING/APPROVED/POSTPONED/DISPENSING/DISPENSED/INCOMPLETE) so the
-     * patient can still see and complete it once the calendar day rolls over. Uses the same
+     * Today's intakes, and separately, any still-unresolved intake left over from a previous day (a
+     * MISSED window, or one still sitting PENDING/APPROVED/POSTPONED/DISPENSING/DISPENSED/INCOMPLETE)
+     * so the patient can still see and complete it once the calendar day rolls over. Uses the same
      * {@link IntakeStatus#UNRESOLVED} definition the blocking logic
      * (IntakeOrchestrationService/ReminderScheduler) already relies on, on purpose: SKIPPED is a
      * deliberate, terminal "this dose was intentionally skipped" outcome (see IntakeService.skip) —
      * it's neither actionable nor still expected to be taken, so it must NOT be carried over just
      * because it isn't TAKEN. A carried-over intake drops out once it resolves (TAKEN or SKIPPED) —
      * it simply stops matching UNRESOLVED on the next call. Today's own intakes are unaffected by
-     * this and keep showing regardless of status, same as before. Carried-over intakes are appended
-     * last so that if a new occurrence for the same timing was already created for today (and is
-     * sitting blocked behind the older one — see IntakeOrchestrationService), callers that key by
-     * timing and take "last wins" (the Flutter app's per-window status map) surface the older,
-     * still-unresolved one the user actually needs to act on.
+     * this and keep showing regardless of status, same as before. The two lists are kept separate
+     * (not flattened into one array) so a previous-day intake can never overwrite today's own window
+     * for the same timing — {@code previousDaysUnresolved} is oldest-first, per
+     * findUnresolvedOrderByScheduledTimeAsc's own contract.
      */
-    public List<Intake> getToday(Long userId) {
+    public TodayIntakesResponse getToday(Long userId) {
         LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
         LocalDateTime endOfDay = LocalDate.now().atTime(LocalTime.MAX);
         List<Intake> today = intakeRepository.findByUserIdBetween(userId, startOfDay, endOfDay);
 
-        List<Intake> carriedOver = intakeRepository
+        List<Intake> previousDaysUnresolved = intakeRepository
                 .findUnresolvedOrderByScheduledTimeAsc(userId, IntakeStatus.UNRESOLVED)
                 .stream()
                 .filter(intake -> intake.getScheduledTime().isBefore(startOfDay))
                 .toList();
 
-        if (carriedOver.isEmpty()) {
-            return today;
-        }
-        List<Intake> combined = new ArrayList<>(today);
-        combined.addAll(carriedOver);
-        return combined;
+        return new TodayIntakesResponse(today, previousDaysUnresolved);
     }
 
     /**
@@ -148,11 +142,17 @@ public class IntakeService {
         return intakeRepository.save(intake);
     }
 
-    /** Device's IR sensor confirmed the compartment is empty. This is the only path to TAKEN. */
+    /**
+     * Device's IR sensor confirmed the compartment is empty. This is the only path to TAKEN.
+     * Accepts a late confirmation on an already-INCOMPLETE intake (MissedIntakeScheduler.
+     * detectIncomplete may have already swept it once the grace period elapsed) as well as the
+     * normal DISPENSED case — the patient removing the pills late is still a real TAKEN outcome,
+     * not something to keep permanently stuck as INCOMPLETE just because the sweep ran first.
+     */
     public Intake markTaken(Long id) {
         Intake intake = findOrThrow(id);
-        if (intake.getStatus() != IntakeStatus.DISPENSED) {
-            logger.warn("Ignoring 'intake_confirmed' event for intake {}: status is {}, not DISPENSED", id, intake.getStatus());
+        if (intake.getStatus() != IntakeStatus.DISPENSED && intake.getStatus() != IntakeStatus.INCOMPLETE) {
+            logger.warn("Ignoring 'intake_confirmed' event for intake {}: status is {}, not DISPENSED/INCOMPLETE", id, intake.getStatus());
             return intake;
         }
         intake.setStatus(IntakeStatus.TAKEN);

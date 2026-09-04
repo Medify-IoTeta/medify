@@ -15,6 +15,16 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// GET /api/intakes/today's response — today's own windows and any still-unresolved intake
+/// carried over from a previous day are kept as two separate lists (matching the backend's
+/// TodayIntakesResponse) so a previous-day intake never overwrites today's own window for the
+/// same timing.
+class TodayIntakes {
+  final List<Map<String, dynamic>> today;
+  final List<Map<String, dynamic>> previousDaysUnresolved;
+  TodayIntakes({required this.today, required this.previousDaysUnresolved});
+}
+
 Never _throwApiException(http.Response response) {
   String message = 'Request failed (${response.statusCode})';
   try {
@@ -231,13 +241,17 @@ class ApiService {
     throw Exception('Failed to postpone intake: ${response.statusCode}');
   }
 
-  Future<List<Map<String, dynamic>>> getTodayIntakes() async {
+  Future<TodayIntakes> getTodayIntakes() async {
     final url = Uri.parse('$baseUrl/api/intakes/today');
     final response = await http.get(url, headers: await _authHeaders());
 
     if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      return data.cast<Map<String, dynamic>>();
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      return TodayIntakes(
+        today: (data['today'] as List).cast<Map<String, dynamic>>(),
+        previousDaysUnresolved:
+            (data['previousDaysUnresolved'] as List).cast<Map<String, dynamic>>(),
+      );
     }
 
     throw Exception('Failed to get today intakes: ${response.statusCode}');

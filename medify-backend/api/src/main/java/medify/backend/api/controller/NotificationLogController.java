@@ -1,7 +1,7 @@
 package medify.backend.api.controller;
 
+import medify.backend.api.dto.NotificationLogEntry;
 import medify.backend.api.service.NotificationLogService;
-import medify.backend.domain.model.NotificationLog;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 import java.time.LocalDateTime;
@@ -19,7 +19,7 @@ public class NotificationLogController {
     }
 
     @GetMapping
-    public List<NotificationLog> getLog(
+    public List<NotificationLogEntry> getLog(
             @RequestParam("userId") Long userId,
             @RequestParam(value = "from", required = false)
                 @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,

@@ -2,6 +2,7 @@ package medify.backend.api.controller;
 
 import medify.backend.api.auth.CurrentUserContext;
 import medify.backend.api.dto.IntakeHistoryEntry;
+import medify.backend.api.dto.TodayIntakesResponse;
 import medify.backend.api.service.AuthService;
 import medify.backend.api.service.IntakeOrchestrationService;
 import medify.backend.api.service.IntakeService;
@@ -35,7 +36,7 @@ public class IntakeController {
     }
 
     @GetMapping("/today")
-    public List<Intake> getToday() {
+    public TodayIntakesResponse getToday() {
         return intakeService.getToday(authService.resolvePatientId(currentUserContext.getUser()));
     }
 
@@ -48,7 +49,7 @@ public class IntakeController {
         return intakeService.getHistory(authService.resolvePatientId(currentUserContext.getUser()), days);
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/{id:[0-9]+}")
     public Intake getById(@PathVariable("id") Long id) {
         return intakeService.getById(id);
     }
