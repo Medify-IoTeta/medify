@@ -6,8 +6,6 @@ import '../theme/app_theme.dart';
 import '../utils/app_logger.dart';
 import 'fill_box_wizard_screen.dart';
 
-const int totalBoxSlots = 13;
-
 class FillBoxGuideScreen extends StatefulWidget {
   const FillBoxGuideScreen({super.key});
 
@@ -20,7 +18,7 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
 
   bool _loading = true;
   bool _polling = true;
-  Map<String, dynamic>? _refillState;
+  List<Map<String, dynamic>> _slots = [];
   List<Medicine> _medicines = [];
 
   @override
@@ -36,15 +34,15 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
     super.dispose();
   }
 
-  // Refreshes refill state every few seconds so a fill made from the other
-  // role's session (patient vs. caregiver) shows up here without a manual pull.
+  // Refreshes live so a fill (or a dispense, which clears a slot) made from the other role's
+  // session, or by the device itself, shows up here without a manual pull.
   void _startPolling() {
     Future.doWhile(() async {
       await Future.delayed(const Duration(seconds: 3));
       if (!_polling || !mounted) return false;
       try {
-        final state = await _apiService.getRefillState();
-        if (mounted) setState(() => _refillState = state);
+        final slots = await _apiService.getRefillSlots();
+        if (mounted) setState(() => _slots = slots);
       } catch (e) {
         AppLogger.debug('Refill state poll failed, retrying: $e', 'FillBox');
       }
@@ -56,13 +54,13 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
     setState(() => _loading = true);
     try {
       final results = await Future.wait([
-        _apiService.getRefillState(),
+        _apiService.getRefillSlots(),
         _apiService.getMedicines(),
       ]);
       if (!mounted) return;
       setState(() {
-        _refillState = results[0] as Map<String, dynamic>?;
-        _medicines   = results[1] as List<Medicine>;
+        _slots     = results[0] as List<Map<String, dynamic>>;
+        _medicines = results[1] as List<Medicine>;
         _loading = false;
       });
     } catch (e) {
@@ -72,51 +70,18 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
     }
   }
 
-  Future<void> _startNewRefill() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Reset Pill Box'),
-        content: const Text(
-            'Use this only if you have physically emptied and restarted the box from slot 1. All fill progress will be cleared. Continue?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.error),
-            child: const Text('Reset'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    try {
-      final state = await _apiService.startRefill();
-      if (!mounted) return;
-      setState(() => _refillState = state);
-    } catch (e) {
-      _showError('$e');
-    }
-  }
-
   Future<void> _openWizard(Medicine medicine) async {
-    final cells = _cellsForMedicine(medicine);
+    final cells = _missingCellsFor(medicine);
     if (cells.isEmpty) {
-      _showError('No cells scheduled for this medicine.');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${medicine.name} is already in every one of its cells.')),
+      );
       return;
     }
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FillBoxWizardScreen(
-          medicine: medicine,
-          cellNumbers: cells,
-          currentSlot: _currentSlot,
-          isFilled: (slot) => _isFilled(slot, medicine.id),
-        ),
+        builder: (_) => FillBoxWizardScreen(medicine: medicine, cellNumbers: cells),
       ),
     );
     _load();
@@ -138,45 +103,36 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
       m.enabled &&
       (m.disabledUntil == null || m.disabledUntil!.isBefore(DateTime.now()));
 
-  List<String> get _activeTimings {
-    const order = ['MORNING', 'NOON', 'EVENING'];
-    return order
-        .where((t) =>
-            _scheduledMedicines.any((m) => m.timePeriod.name.toUpperCase() == t))
-        .toList();
-  }
+  List<Map<String, dynamic>> _slotsForTiming(String timing) =>
+      _slots.where((s) => s['timing'] == timing).toList();
 
-  int get _currentSlot =>
-      (_refillState?['currentSlot'] as num?)?.toInt() ?? 0;
+  /// 0-based cell numbers currently missing this medicine, in physical slot order — exactly what
+  /// the backend says needs it, never client-computed.
+  List<int> _missingCellsFor(Medicine m) => _slotsForTiming(m.timePeriod.name.toUpperCase())
+      .where((s) => (s['missingMedicineIds'] as List).any((id) => id.toString() == m.id))
+      .map((s) => s['slotNumber'] as int)
+      .toList();
 
-  List<Map<String, dynamic>> get _filledCells =>
-      ((_refillState?['filledCells'] as List?)?.cast<Map<String, dynamic>>()) ??
-      [];
-
-  bool _isFilled(int slot, String medicineId) => _filledCells.any((c) =>
-      (c['slotNumber'] as num).toInt() == slot &&
-      c['medicineId'].toString() == medicineId);
-
-  int _filledCountFor(String medicineId) => _filledCells
-      .where((c) => c['medicineId'].toString() == medicineId)
+  int _filledCountFor(Medicine m) => _slotsForTiming(m.timePeriod.name.toUpperCase())
+      .where((s) => (s['actualMedicineIds'] as List).any((id) => id.toString() == m.id))
       .length;
 
-  // Cell indices (0-based) belonging to this medicine's timing window,
-  // ordered starting from the box's current position.
-  List<int> _cellsForMedicine(Medicine m) {
-    final timings = _activeTimings;
-    final myTiming = m.timePeriod.name.toUpperCase();
-    if (timings.isEmpty || !timings.contains(myTiming)) return [];
-    final allCells = List.generate(totalBoxSlots, (i) => i)
-        .where((i) => timings[i % timings.length] == myTiming)
-        .toList();
-    final splitAt = allCells.indexWhere((i) => i >= _currentSlot);
-    if (splitAt <= 0) return allCells;
-    return [...allCells.sublist(splitAt), ...allCells.sublist(0, splitAt)];
+  int _totalCellsFor(Medicine m) => _slotsForTiming(m.timePeriod.name.toUpperCase()).length;
+
+  /// Slots that physically contain a medicine no longer part of the current active schedule —
+  /// e.g. it was disabled/removed/retimed since it was loaded. The app can't know pills were
+  /// physically removed, so this stays visible until a human clears it (or the medicine becomes
+  /// active for that slot's timing again).
+  List<Map<String, dynamic>> get _slotsWithUnexpectedContents =>
+      _slots.where((s) => (s['unexpectedMedicineIds'] as List).isNotEmpty).toList();
+
+  String _medicineLabel(dynamic medicineId) {
+    final match = _medicines.where((m) => m.id == medicineId.toString());
+    return match.isEmpty ? 'a removed/changed medication' : match.first.name;
   }
 
   List<Medicine> get _sortedScheduledMedicines {
-    final timings = _activeTimings;
+    const timings = ['MORNING', 'NOON', 'EVENING'];
     final meds = List<Medicine>.from(_scheduledMedicines);
     meds.sort((a, b) {
       final ai = timings.indexOf(a.timePeriod.name.toUpperCase());
@@ -243,28 +199,13 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
   }
 
   Widget _buildBody() {
-    if (_refillState == null) {
+    if (_slots.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xxl),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.inventory_2_outlined,
-                  size: 72, color: AppColors.textSecondary),
-              const SizedBox(height: AppSpacing.lg),
-              Text('No active refill session.',
-                  style: AppTextStyles.h3
-                      .copyWith(color: AppColors.textSecondary),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.xl),
-              _BigButton(
-                label: 'Start First Refill',
-                icon: Icons.add_circle_outline,
-                onPressed: _startNewRefill,
-              ),
-            ],
-          ),
+          child: Text('No pill box registered yet.',
+              style: AppTextStyles.h3.copyWith(color: AppColors.textSecondary),
+              textAlign: TextAlign.center),
         ),
       );
     }
@@ -280,101 +221,105 @@ class _FillBoxGuideScreenState extends State<FillBoxGuideScreen> {
       );
     }
 
-    final totalCells =
-        medicines.fold<int>(0, (sum, m) => sum + _cellsForMedicine(m).length);
-    final filledCells = medicines.fold<int>(
-        0, (sum, m) => sum + _filledCountFor(m.id));
+    final totalCells = medicines.fold<int>(0, (sum, m) => sum + _totalCellsFor(m));
+    final filledCells = medicines.fold<int>(0, (sum, m) => sum + _filledCountFor(m));
+    final unexpected = _slotsWithUnexpectedContents;
 
-    return Column(
-      children: [
-        // ── Summary bar ───────────────────────────────────────
-        Container(
-          width: double.infinity,
-          color: AppColors.muted,
-          padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.lg, vertical: AppSpacing.md),
-          child: Row(
-            children: [
-              Text('$filledCells / $totalCells cells filled',
-                  style: AppTextStyles.bodyLg),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: AppRadius.smBorder,
-                  child: LinearProgressIndicator(
-                    value: totalCells == 0 ? 0 : filledCells / totalCells,
-                    minHeight: 8,
-                    backgroundColor: AppColors.border,
-                    valueColor:
-                        const AlwaysStoppedAnimation<Color>(AppColors.success),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg, AppSpacing.md, AppSpacing.lg, 0),
-          child: Text(
-            'Choose a medicine to see where it goes',
-            style: AppTextStyles.body
-                .copyWith(color: AppColors.textSecondary),
-          ),
-        ),
-
-        // ── Medicine list ─────────────────────────────────────
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            itemCount: medicines.length + 1, // +1 for reset button
-            itemBuilder: (_, index) {
-              if (index == medicines.length) {
-                return Padding(
-                  padding: const EdgeInsets.only(top: AppSpacing.lg),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _startNewRefill,
-                      icon: const Icon(Icons.restart_alt, size: 20),
-                      label: const Text('Reset Box (Start From Slot 1)'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.textSecondary,
-                        side: const BorderSide(color: AppColors.border),
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 18),
-                        textStyle: AppTextStyles.bodyLg,
-                      ),
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        children: [
+          // ── Summary bar ───────────────────────────────────────
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+            decoration: BoxDecoration(
+              color: AppColors.muted,
+              borderRadius: AppRadius.mdBorder,
+            ),
+            child: Row(
+              children: [
+                Text('$filledCells / $totalCells cells filled',
+                    style: AppTextStyles.bodyLg),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: AppRadius.smBorder,
+                    child: LinearProgressIndicator(
+                      value: totalCells == 0 ? 0 : filledCells / totalCells,
+                      minHeight: 8,
+                      backgroundColor: AppColors.border,
+                      valueColor:
+                          const AlwaysStoppedAnimation<Color>(AppColors.success),
                     ),
                   ),
-                );
-              }
-
-              final medicine = medicines[index];
-              final timing = medicine.timePeriod.name.toUpperCase();
-              final total = _cellsForMedicine(medicine).length;
-              final filled = _filledCountFor(medicine.id);
-              final complete = total > 0 && filled >= total;
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: AppSpacing.md),
-                child: _MedicineRow(
-                  medicine: medicine,
-                  timingLabel: _timingLabel(timing),
-                  timingIcon: _timingIcon(timing),
-                  timingColor: _timingColor(timing),
-                  formatAmount: _formatAmount,
-                  filledCount: filled,
-                  totalCount: total,
-                  complete: complete,
-                  onTap: () => _openWizard(medicine),
                 ),
-              );
-            },
+              ],
+            ),
           ),
-        ),
-      ],
+
+          if (unexpected.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.md),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.1),
+                borderRadius: AppRadius.mdBorder,
+                border: Border.all(color: AppColors.warning),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text('Cells to physically check',
+                          style: AppTextStyles.bodyLg.copyWith(color: AppColors.warning)),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  for (final slot in unexpected)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        'Cell ${(slot['slotNumber'] as int) + 1}: still has '
+                        '${(slot['unexpectedMedicineIds'] as List).map(_medicineLabel).join(', ')} '
+                        '— no longer part of the active schedule for this cell. Remove it if it\'s no longer taken.',
+                        style: AppTextStyles.bodySm.copyWith(color: AppColors.warning),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: AppSpacing.lg),
+          Text('Choose a medicine to see which cells it still needs',
+              style: AppTextStyles.body.copyWith(color: AppColors.textSecondary)),
+          const SizedBox(height: AppSpacing.md),
+
+          // ── Medicine list ─────────────────────────────────────
+          for (final medicine in medicines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.md),
+              child: _MedicineRow(
+                medicine: medicine,
+                timingLabel: _timingLabel(medicine.timePeriod.name.toUpperCase()),
+                timingIcon: _timingIcon(medicine.timePeriod.name.toUpperCase()),
+                timingColor: _timingColor(medicine.timePeriod.name.toUpperCase()),
+                formatAmount: _formatAmount,
+                filledCount: _filledCountFor(medicine),
+                totalCount: _totalCellsFor(medicine),
+                complete: _missingCellsFor(medicine).isEmpty,
+                onTap: () => _openWizard(medicine),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -485,34 +430,6 @@ class _MedicineRow extends StatelessWidget {
               const Icon(Icons.chevron_right, color: AppColors.textSecondary),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BigButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  const _BigButton({
-    required this.label,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 22),
-        label: Text(label),
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 18),
-          textStyle: AppTextStyles.bodyLg.copyWith(fontWeight: FontWeight.w700),
         ),
       ),
     );

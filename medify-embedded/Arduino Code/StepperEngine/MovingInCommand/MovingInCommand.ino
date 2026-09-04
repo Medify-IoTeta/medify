@@ -62,6 +62,12 @@ const char* DEVICE_TOKEN = "25e229c56d9448b8a74de53d66649cf112671da4a2ac5037d47a
 WebSocketsClient webSocket;
 bool wsConnected = false;
 bool wsClientStarted = false;         // has connectWebSocket() ever been called (WiFi reached WL_CONNECTED at least once)
+// Whether this connection has received the backend's authoritative currentSlot yet. The backend
+// is the source of truth for physical wheel position (survives reboots; this device's own
+// currentSlot below does not) -- no command:dispense may execute until this is true. Reset to
+// false on every disconnect so a reconnect (not just a power cycle) re-syncs before dispatching
+// resumes; the backend re-sends "sync" on every new connection regardless of cause.
+bool slotSynced = false;
 unsigned long lastWifiAttemptMs = 0;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;
 
@@ -213,6 +219,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t length) {
 
     case WStype_DISCONNECTED:
       wsConnected = false;
+      slotSynced = false; // must re-sync currentSlot from the backend on the next connection
       Serial.println("WebSocket disconnected");
       break;
 
@@ -235,13 +242,38 @@ void handleWsMessage(uint8_t* payload, size_t length) {
   }
 
   const char* type = doc["type"];
-  if (type == nullptr || strcmp(type, "command") != 0) return;
+  if (type == nullptr) return;
+
+  if (strcmp(type, "sync") == 0) {
+    // The backend's authoritative, persisted physical position -- overrides whatever this
+    // device's own currentSlot currently is (0 on a fresh boot; whatever it was in memory on a
+    // mere reconnect). Sent once per connection, right after the WebSocket handshake completes.
+    currentSlot = doc["currentSlot"];
+    slotSynced = true;
+    Serial.print("Synced currentSlot from backend: ");
+    Serial.println(currentSlot);
+    sendSyncAck();
+    return;
+  }
+
+  if (strcmp(type, "command") != 0) return;
 
   const char* command = doc["command"];
   if (command == nullptr || strcmp(command, "dispense") != 0) return;
 
   const char* commandId = doc["commandId"];
   long intakeId = doc["intakeId"];
+
+  // Must not execute (or even ack) a dispense before currentSlot has been synced from the
+  // backend. The backend already gates dispatch on this too (DeviceConnectionAdapter refuses to
+  // send command:dispense until it sees this device's sync_ack), so this should never actually be
+  // reached in normal operation -- it's a deliberate second line of defense, since firmware should
+  // never trust the network to enforce ordering by itself. Silently not acking here surfaces as
+  // the backend's existing 5s ack-timeout instead of risking a move from an unknown position.
+  if (!slotSynced) {
+    Serial.println("Ignoring command:dispense -- currentSlot not yet synced from backend");
+    return;
+  }
 
   sendAck(commandId);
   performDispense(commandId, intakeId);
@@ -372,11 +404,22 @@ void sendAck(const char* commandId) {
 }
 
 void sendDispensedEvent(const char* commandId, long intakeId) {
+  // currentSlot already reflects the post-move position here -- moveOneSlot() (called just before
+  // this, in performDispense) increments it before returning. This is the only place the backend
+  // learns the device's new position; DeviceWebSocketHandler persists it into devices.current_slot.
   StaticJsonDocument<192> doc;
   doc["type"] = "event";
   doc["event"] = "dispensed";
   doc["commandId"] = commandId;
   doc["intakeId"] = intakeId;
+  doc["currentSlot"] = currentSlot;
+  sendJson(doc);
+}
+
+void sendSyncAck() {
+  StaticJsonDocument<96> doc;
+  doc["type"] = "sync_ack";
+  doc["currentSlot"] = currentSlot;
   sendJson(doc);
 }
 

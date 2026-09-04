@@ -31,6 +31,7 @@ class DeviceConnectionAdapterTest {
         WebSocketSession session = mock(WebSocketSession.class);
         when(session.isOpen()).thenReturn(true);
         adapter.register("pillbox-01", session);
+        adapter.markSynced("pillbox-01"); // dispatchDispense requires this before it will send anything
 
         ExecutorService dispatchThread = Executors.newSingleThreadExecutor();
         try {
@@ -75,5 +76,64 @@ class DeviceConnectionAdapterTest {
         DeviceConnectionPort.DispatchOutcome outcome = adapter.dispatchDispense("never-registered", 1L);
 
         assertEquals(DeviceConnectionPort.DispatchOutcome.OFFLINE, outcome);
+    }
+
+    @Test
+    void dispatchToConnectedButNotYetSyncedDeviceReturnsNotSyncedWithoutSendingAnything() throws Exception {
+        // A freshly (re)connected device has an open session but hasn't confirmed it applied its
+        // authoritative currentSlot yet -- dispatchDispense must never race ahead of that, since
+        // executing a dispense here could move the wheel from a position the device is still wrong
+        // about (its own post-reboot counter, reset to 0, not yet overwritten by the backend's sync).
+        DeviceConnectionAdapter adapter = new DeviceConnectionAdapter(new ObjectMapper());
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.isOpen()).thenReturn(true);
+        adapter.register("pillbox-01", session);
+
+        DeviceConnectionPort.DispatchOutcome outcome = adapter.dispatchDispense("pillbox-01", 1L);
+
+        assertEquals(DeviceConnectionPort.DispatchOutcome.NOT_SYNCED, outcome);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void markSyncedMakesTheDeviceDispatchEligible() {
+        DeviceConnectionAdapter adapter = new DeviceConnectionAdapter(new ObjectMapper());
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.isOpen()).thenReturn(true);
+        adapter.register("pillbox-01", session);
+
+        assertFalse(adapter.isSynced("pillbox-01"));
+        adapter.markSynced("pillbox-01");
+        assertTrue(adapter.isSynced("pillbox-01"));
+    }
+
+    @Test
+    void unregisterClearsSyncedStateSoAReconnectMustSyncAgain() {
+        DeviceConnectionAdapter adapter = new DeviceConnectionAdapter(new ObjectMapper());
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.isOpen()).thenReturn(true);
+        adapter.register("pillbox-01", session);
+        adapter.markSynced("pillbox-01");
+
+        adapter.unregister("pillbox-01");
+
+        assertFalse(adapter.isSynced("pillbox-01"));
+    }
+
+    @Test
+    void sendSyncSendsTheCurrentSlotPayload() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DeviceConnectionAdapter adapter = new DeviceConnectionAdapter(objectMapper);
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.isOpen()).thenReturn(true);
+        adapter.register("pillbox-01", session);
+
+        adapter.sendSync("pillbox-01", 7);
+
+        ArgumentCaptor<TextMessage> captor = ArgumentCaptor.forClass(TextMessage.class);
+        verify(session).sendMessage(captor.capture());
+        JsonNode sent = objectMapper.readTree(captor.getValue().getPayload());
+        assertEquals("sync", sent.get("type").asText());
+        assertEquals(7, sent.get("currentSlot").asInt());
     }
 }

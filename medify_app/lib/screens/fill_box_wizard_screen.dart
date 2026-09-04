@@ -4,20 +4,18 @@ import '../models/medicine.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 
-/// Elderly-friendly step-through wizard: walks the user through the
-/// physical cells one medicine's pills belong in, one cell at a time.
+/// Elderly-friendly step-through wizard: walks the user through the physical cells one medicine's
+/// pills are still missing from. [cellNumbers] comes straight from the backend's diff (each one
+/// currently lacks this medicine) — every cell here starts unfilled by construction, so there's no
+/// need for an external "already filled" signal the way the old session-scoped design needed.
 class FillBoxWizardScreen extends StatefulWidget {
   final Medicine medicine;
-  final List<int> cellNumbers; // 0-based, pre-ordered by the caller
-  final int currentSlot;
-  final bool Function(int slot) isFilled;
+  final List<int> cellNumbers; // 0-based, in physical slot order, all currently missing this medicine
 
   const FillBoxWizardScreen({
     super.key,
     required this.medicine,
     required this.cellNumbers,
-    required this.currentSlot,
-    required this.isFilled,
   });
 
   @override
@@ -27,23 +25,13 @@ class FillBoxWizardScreen extends StatefulWidget {
 class _FillBoxWizardScreenState extends State<FillBoxWizardScreen> {
   final ApiService _apiService = ApiService();
 
-  late int _index;
-  late Set<int> _filledLocal;
+  int _index = 0;
+  final Set<int> _filledLocal = {};
   bool _busy = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _filledLocal = widget.cellNumbers.where(widget.isFilled).toSet();
-    final firstUnfilled =
-        widget.cellNumbers.indexWhere((s) => !_filledLocal.contains(s));
-    _index = firstUnfilled == -1 ? 0 : firstUnfilled;
-  }
 
   int get _currentCell => widget.cellNumbers[_index];
   bool get _currentFilled => _filledLocal.contains(_currentCell);
   bool get _isLast => _index == widget.cellNumbers.length - 1;
-  bool get _isNextCycle => _currentCell < widget.currentSlot;
 
   Future<void> _toggleFilled() async {
     final cell = _currentCell;
@@ -160,25 +148,6 @@ class _FillBoxWizardScreenState extends State<FillBoxWizardScreen> {
                         style: AppTextStyles.h3,
                         textAlign: TextAlign.center,
                       ),
-                      if (_isNextCycle) ...[
-                        const SizedBox(height: AppSpacing.lg),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.md,
-                              vertical: AppSpacing.sm),
-                          decoration: BoxDecoration(
-                            color: AppColors.warning.withValues(alpha: 0.12),
-                            borderRadius: AppRadius.mdBorder,
-                            border: Border.all(color: AppColors.warning),
-                          ),
-                          child: Text(
-                            'This cell is for your next refill round',
-                            style: AppTextStyles.bodyLg
-                                .copyWith(color: AppColors.warning),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),

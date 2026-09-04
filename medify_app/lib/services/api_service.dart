@@ -373,37 +373,33 @@ class ApiService {
 
   // ── Box refill ────────────────────────────────────────────────
 
-  Future<Map<String, dynamic>> startRefill() async {
-    final url = Uri.parse('$baseUrl/api/box-refill/start');
-    final response = await http.post(url, headers: await _authHeaders());
-    if (response.statusCode == 200) return jsonDecode(response.body);
-    throw Exception('Failed to start refill: ${response.statusCode}');
-  }
-
-  Future<Map<String, dynamic>?> getRefillState() async {
-    final url = Uri.parse('$baseUrl/api/box-refill/current');
+  /// The 12 currently-loadable slots (the 13th is wherever the wheel currently sits, above the
+  /// pickup compartment, and is simply omitted by the backend) — each with its computed timing
+  /// and the diff between what's actually there and what's currently expected. No more session
+  /// concept: this always reflects live, persisted state, never resets on its own.
+  Future<List<Map<String, dynamic>>> getRefillSlots() async {
+    final url = Uri.parse('$baseUrl/api/box-refill/state');
     final response = await http.get(url, headers: await _authHeaders());
-    if (response.statusCode == 204) return null;
-    if (response.statusCode == 200) return jsonDecode(response.body);
+    if (response.statusCode == 200) {
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.cast<Map<String, dynamic>>();
+    }
     throw Exception('Failed to get refill state: ${response.statusCode}');
   }
 
+  /// Throws ApiException (with the backend's real message) if this slot is currently the one
+  /// above the pickup compartment — the backend re-checks this itself, not just the UI, since the
+  /// wheel can advance between when the screen loaded and when this call arrives.
   Future<void> markSlotFilled(int slotNumber, String medicineId) async {
-    final url = Uri.parse(
-        '$baseUrl/api/box-refill/slots/$slotNumber/medications/$medicineId/fill');
+    final url = Uri.parse('$baseUrl/api/box-refill/slots/$slotNumber/medications/$medicineId');
     final response = await http.post(url, headers: await _authHeaders());
-    if (response.statusCode != 204 && response.statusCode != 200) {
-      throw Exception('Failed to mark slot filled: ${response.statusCode}');
-    }
+    if (response.statusCode != 204 && response.statusCode != 200) _throwApiException(response);
   }
 
   Future<void> unmarkSlotFilled(int slotNumber, String medicineId) async {
-    final url = Uri.parse(
-        '$baseUrl/api/box-refill/slots/$slotNumber/medications/$medicineId/fill');
+    final url = Uri.parse('$baseUrl/api/box-refill/slots/$slotNumber/medications/$medicineId');
     final response = await http.delete(url, headers: await _authHeaders());
-    if (response.statusCode != 204 && response.statusCode != 200) {
-      throw Exception('Failed to unmark slot: ${response.statusCode}');
-    }
+    if (response.statusCode != 204 && response.statusCode != 200) _throwApiException(response);
   }
 
   // ── Intake settings ──────────────────────────────────────────

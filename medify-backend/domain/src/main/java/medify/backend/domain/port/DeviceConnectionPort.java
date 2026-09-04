@@ -13,7 +13,9 @@ public interface DeviceConnectionPort {
         /** No live connection for this device. */
         OFFLINE,
         /** Device is connected but didn't acknowledge in time. */
-        ACK_TIMEOUT
+        ACK_TIMEOUT,
+        /** Device has an open connection but hasn't completed its currentSlot sync handshake yet. */
+        NOT_SYNCED
     }
 
     DispatchOutcome dispatchDispense(String deviceKey, Long intakeId);

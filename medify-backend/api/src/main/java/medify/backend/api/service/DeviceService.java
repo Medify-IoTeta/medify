@@ -2,6 +2,7 @@ package medify.backend.api.service;
 
 import medify.backend.domain.model.Device;
 import medify.backend.domain.model.DeviceStatus;
+import medify.backend.domain.model.Timing;
 import medify.backend.domain.port.DeviceRepositoryPort;
 import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
@@ -38,6 +39,29 @@ public class DeviceService {
             device.setStatus(DeviceStatus.OFFLINE);
             deviceRepository.save(device);
         });
+    }
+
+    /**
+     * Called only from the device's own "dispensed" event report, after a completed motor move.
+     * Advances currentSlot and nextDueTiming together — they're always updated by the exact same
+     * physical event, on purpose, so they can never drift apart from each other independently.
+     * Returns the updated device (empty if unknown) so callers needing its id — e.g. to also clear
+     * that slot's refill contents — don't need a second lookup.
+     */
+    public Optional<Device> recordDispense(String deviceKey, int currentSlot) {
+        return deviceRepository.findByDeviceKey(deviceKey).map(device -> {
+            device.setCurrentSlot(currentSlot);
+            device.setNextDueTiming(advance(device.getNextDueTiming()));
+            return deviceRepository.save(device);
+        });
+    }
+
+    private static Timing advance(Timing timing) {
+        return switch (timing) {
+            case MORNING -> Timing.NOON;
+            case NOON -> Timing.EVENING;
+            case EVENING -> Timing.MORNING;
+        };
     }
 
     private static String hash(String raw) {

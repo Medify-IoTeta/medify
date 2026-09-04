@@ -9,6 +9,7 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,7 +20,7 @@ import java.util.concurrent.TimeoutException;
 /**
  * Holds the live WebSocket session per connected device and dispatches commands
  * over it. This is the only place that knows about WebSocketSession — the domain
- * only sees DeviceConnectionPort's ACKED/OFFLINE/ACK_TIMEOUT outcomes.
+ * only sees DeviceConnectionPort's ACKED/OFFLINE/ACK_TIMEOUT/NOT_SYNCED outcomes.
  */
 @Component
 public class DeviceConnectionAdapter implements DeviceConnectionPort {
@@ -28,6 +29,14 @@ public class DeviceConnectionAdapter implements DeviceConnectionPort {
 
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<Void>> pendingAcks = new ConcurrentHashMap<>();
+    /**
+     * Devices that have completed the currentSlot sync handshake on their CURRENT connection.
+     * Deliberately separate from `sessions` — a session existing only means the WebSocket handshake
+     * succeeded, not that the device has received/applied its authoritative slot position yet.
+     * dispatchDispense must never race ahead of this, so a dispense can never execute against a
+     * device that's still assuming its own (post-reboot, reset-to-zero) position.
+     */
+    private final Set<String> syncedDevices = ConcurrentHashMap.newKeySet();
     private final ObjectMapper objectMapper;
 
     public DeviceConnectionAdapter(ObjectMapper objectMapper) {
@@ -40,6 +49,35 @@ public class DeviceConnectionAdapter implements DeviceConnectionPort {
 
     public void unregister(String deviceKey) {
         sessions.remove(deviceKey);
+        syncedDevices.remove(deviceKey);
+    }
+
+    /** Pushes the device's authoritative persisted slot right after connection — see markSynced. */
+    public void sendSync(String deviceKey, int currentSlot) {
+        WebSocketSession session = sessions.get(deviceKey);
+        if (session == null || !session.isOpen()) {
+            logger.warn("sendSync: no open session for device {}", deviceKey);
+            return;
+        }
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                    "type", "sync",
+                    "currentSlot", currentSlot
+            ));
+            session.sendMessage(new TextMessage(payload));
+            logger.info("Sent currentSlot sync ({}) to device {}", currentSlot, deviceKey);
+        } catch (IOException e) {
+            logger.warn("Failed to send currentSlot sync to device {}: {}", deviceKey, e.getMessage());
+        }
+    }
+
+    /** Called once the device replies with sync_ack, confirming it applied the synced slot. */
+    public void markSynced(String deviceKey) {
+        syncedDevices.add(deviceKey);
+    }
+
+    public boolean isSynced(String deviceKey) {
+        return syncedDevices.contains(deviceKey);
     }
 
     public void completeAck(String commandId) {
@@ -58,6 +96,10 @@ public class DeviceConnectionAdapter implements DeviceConnectionPort {
         if (session == null || !session.isOpen()) {
             logger.warn("[BUTTON_FLOW] dispatchDispense: no open session for device {} -> OFFLINE", deviceKey);
             return DispatchOutcome.OFFLINE;
+        }
+        if (!syncedDevices.contains(deviceKey)) {
+            logger.warn("[BUTTON_FLOW] dispatchDispense: device {} connected but not yet synced -> NOT_SYNCED", deviceKey);
+            return DispatchOutcome.NOT_SYNCED;
         }
 
         String commandId = UUID.randomUUID().toString();

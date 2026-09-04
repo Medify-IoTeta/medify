@@ -8,6 +8,7 @@ import medify.backend.domain.model.Device;
 import medify.backend.domain.model.IntakeActionResult;
 import medify.backend.domain.port.DeviceRepositoryPort;
 import medify.backend.domain.port.NotificationPort;
+import medify.backend.domain.port.SlotContentRepositoryPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
@@ -35,6 +36,7 @@ class DeviceWebSocketHandlerTest {
     private IntakeService intakeService;
     private IntakeOrchestrationService intakeOrchestrationService;
     private NotificationPort notificationPort;
+    private SlotContentRepositoryPort slotContentRepository;
     private ObjectMapper objectMapper;
     private WebSocketSession session;
 
@@ -46,18 +48,22 @@ class DeviceWebSocketHandlerTest {
         intakeService = mock(IntakeService.class);
         intakeOrchestrationService = mock(IntakeOrchestrationService.class);
         notificationPort = mock(NotificationPort.class);
+        slotContentRepository = mock(SlotContentRepositoryPort.class);
         objectMapper = new ObjectMapper();
 
         session = mock(WebSocketSession.class);
         when(session.getAttributes()).thenReturn(Map.of(DeviceAuthHandshakeInterceptor.DEVICE_KEY_ATTR, "pillbox-01"));
     }
 
+    private DeviceWebSocketHandler newHandler(Executor buttonPressExecutor) {
+        return new DeviceWebSocketHandler(connectionAdapter, deviceService, deviceRepository, intakeService,
+                intakeOrchestrationService, notificationPort, slotContentRepository, objectMapper, buttonPressExecutor);
+    }
+
     @Test
     void buttonPressedIsHandedToTheExecutorNotRunInlineOnTheCallingThread() throws Exception {
         Executor buttonPressExecutor = mock(Executor.class);
-        DeviceWebSocketHandler handler = new DeviceWebSocketHandler(connectionAdapter, deviceService,
-                deviceRepository, intakeService, intakeOrchestrationService, notificationPort, objectMapper,
-                buttonPressExecutor);
+        DeviceWebSocketHandler handler = newHandler(buttonPressExecutor);
 
         handler.handleTextMessage(session, new TextMessage("{\"type\":\"event\",\"event\":\"button_pressed\"}"));
 
@@ -75,10 +81,7 @@ class DeviceWebSocketHandlerTest {
     void submittedTaskRunsTheOrchestrationLogicWhenExecuted() throws Exception {
         // A same-thread executor lets us assert on what the *submitted task* actually does, without
         // coordinating with a real background thread.
-        Executor directExecutor = Runnable::run;
-        DeviceWebSocketHandler handler = new DeviceWebSocketHandler(connectionAdapter, deviceService,
-                deviceRepository, intakeService, intakeOrchestrationService, notificationPort, objectMapper,
-                directExecutor);
+        DeviceWebSocketHandler handler = newHandler(Runnable::run);
 
         Device device = new Device();
         device.setId(1L);
@@ -97,12 +100,67 @@ class DeviceWebSocketHandlerTest {
     void ackMessageIsStillHandledInlineNotDeferred() throws Exception {
         // Only button_pressed needs to be deferred — "ack" itself must keep completing synchronously
         // (it's what the deferred button-press task on another thread is waiting on).
-        DeviceWebSocketHandler handler = new DeviceWebSocketHandler(connectionAdapter, deviceService,
-                deviceRepository, intakeService, intakeOrchestrationService, notificationPort, objectMapper,
-                mock(Executor.class));
+        DeviceWebSocketHandler handler = newHandler(mock(Executor.class));
 
         handler.handleTextMessage(session, new TextMessage("{\"type\":\"ack\",\"commandId\":\"abc-123\"}"));
 
         verify(connectionAdapter).completeAck("abc-123");
+    }
+
+    @Test
+    void connectionEstablishedSendsSyncWithPersistedCurrentSlotAndDoesNotMarkOnlineYet() {
+        DeviceWebSocketHandler handler = newHandler(mock(Executor.class));
+        Device device = new Device();
+        device.setCurrentSlot(5);
+        when(deviceRepository.findByDeviceKey("pillbox-01")).thenReturn(Optional.of(device));
+
+        handler.afterConnectionEstablished(session);
+
+        verify(connectionAdapter).register("pillbox-01", session);
+        verify(connectionAdapter).sendSync("pillbox-01", 5);
+        // Marking ONLINE must wait for sync_ack, not happen at raw connection time — otherwise
+        // dispatchDispense could be attempted before the device has synced its real position.
+        verifyNoInteractions(deviceService);
+    }
+
+    @Test
+    void syncAckMarksTheDeviceSyncedAndOnline() throws Exception {
+        DeviceWebSocketHandler handler = newHandler(mock(Executor.class));
+
+        handler.handleTextMessage(session, new TextMessage("{\"type\":\"sync_ack\",\"currentSlot\":5}"));
+
+        verify(connectionAdapter).markSynced("pillbox-01");
+        verify(deviceService).markOnline("pillbox-01");
+    }
+
+    @Test
+    void dispensedEventRecordsTheDispenseAndClearsThatSlotsContents() throws Exception {
+        DeviceWebSocketHandler handler = newHandler(mock(Executor.class));
+        Device device = new Device();
+        device.setId(1L);
+        device.setCurrentSlot(6);
+        // Per confirmed physical behavior, the reported (post-move) currentSlot IS the slot that
+        // just released its contents — recordDispense and the slot-content clear must use the
+        // exact same value, in one step, from one event.
+        when(deviceService.recordDispense("pillbox-01", 6)).thenReturn(Optional.of(device));
+
+        handler.handleTextMessage(session,
+                new TextMessage("{\"type\":\"event\",\"event\":\"dispensed\",\"intakeId\":42,\"currentSlot\":6}"));
+
+        verify(intakeService).markDispensed(42L);
+        verify(deviceService).recordDispense("pillbox-01", 6);
+        verify(slotContentRepository).deleteByDeviceIdAndSlotNumber(1L, 6);
+    }
+
+    @Test
+    void dispensedEventMissingCurrentSlotStillMarksDispensedButSkipsThePositionUpdate() throws Exception {
+        DeviceWebSocketHandler handler = newHandler(mock(Executor.class));
+
+        handler.handleTextMessage(session,
+                new TextMessage("{\"type\":\"event\",\"event\":\"dispensed\",\"intakeId\":42}"));
+
+        verify(intakeService).markDispensed(42L);
+        verify(deviceService, never()).recordDispense(any(), anyInt());
+        verifyNoInteractions(slotContentRepository);
     }
 }
